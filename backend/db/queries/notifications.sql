@@ -6,13 +6,21 @@ UPDATE notification_outbox n SET attempts=n.attempts+1,next_attempt_at=sqlc.arg(
 INSERT INTO notification_outbox(type,dedupe_key,payload_json,next_attempt_at) VALUES($1,$2,convert_from(sqlc.arg(payload_json), 'UTF8')::jsonb,now()) ON CONFLICT(dedupe_key) DO UPDATE SET payload_json=excluded.payload_json,next_attempt_at=now(),sent_at=NULL,last_error=NULL;
 
 -- name: ListNotificationInbox :many
-SELECT id,type,category,payload_json,read_at,created_at FROM user_notifications WHERE user_id=$1 AND archived_at IS NULL AND (sqlc.arg(before_id)=0 OR id<sqlc.arg(before_id)) AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(row_limit);
+SELECT n.id,n.type,n.category,n.payload_json,n.read_at,n.created_at,actor.id AS actor_user_id,coalesce(nullif(actor.display_name,''),actor.id::text,'')::text AS actor_display_name
+FROM user_notifications n
+LEFT JOIN users actor ON actor.id=n.actor_user_id OR (n.actor_user_id IS NULL AND actor.id::text=n.payload_json->>'actorUserId')
+WHERE n.user_id=$1 AND n.archived_at IS NULL AND (sqlc.arg(before_id)=0 OR n.id<sqlc.arg(before_id)) AND (n.expires_at IS NULL OR n.expires_at>now())
+ORDER BY n.created_at DESC,n.id DESC LIMIT sqlc.arg(row_limit);
 
 -- name: ListReporters :many
 SELECT DISTINCT reporter_user_id FROM moderation_signals WHERE subject_user_id=$1 AND reporter_user_id IS NOT NULL;
 
 -- name: ListUserNotifications :many
-SELECT id,type,payload_json,created_at FROM user_notifications WHERE user_id=$1 AND read_at IS NULL ORDER BY created_at DESC,id DESC LIMIT $2;
+SELECT n.id,n.type,n.payload_json,n.created_at,actor.id AS actor_user_id,coalesce(nullif(actor.display_name,''),actor.id::text,'')::text AS actor_display_name
+FROM user_notifications n
+LEFT JOIN users actor ON actor.id=n.actor_user_id OR (n.actor_user_id IS NULL AND actor.id::text=n.payload_json->>'actorUserId')
+WHERE n.user_id=$1 AND n.read_at IS NULL
+ORDER BY n.created_at DESC,n.id DESC LIMIT $2;
 
 -- name: MarkAllUserNotificationsRead :exec
 UPDATE user_notifications SET read_at=coalesce(read_at,now()) WHERE user_id=$1 AND read_at IS NULL AND archived_at IS NULL;
@@ -27,4 +35,9 @@ UPDATE notification_outbox SET sent_at=now(),last_error=NULL WHERE id=$1;
 UPDATE user_notifications SET read_at=coalesce(read_at,now()) WHERE id=$1 AND user_id=$2;
 
 -- name: UpsertUserNotification :one
-WITH inserted AS (INSERT INTO user_notifications(user_id,type,dedupe_key,payload_json) VALUES($1,$2,$3,convert_from(sqlc.arg(payload_json), 'UTF8')::jsonb) ON CONFLICT(dedupe_key) DO UPDATE SET payload_json=excluded.payload_json RETURNING id) SELECT id FROM inserted;
+WITH inserted AS (
+  INSERT INTO user_notifications(user_id,type,dedupe_key,payload_json,actor_user_id)
+  VALUES($1,$2,$3,convert_from(sqlc.arg(payload_json), 'UTF8')::jsonb,sqlc.narg(actor_user_id))
+  ON CONFLICT(dedupe_key) DO UPDATE SET payload_json=excluded.payload_json, actor_user_id=excluded.actor_user_id
+  RETURNING id
+) SELECT id FROM inserted;

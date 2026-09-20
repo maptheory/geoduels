@@ -132,10 +132,13 @@ export type UserNotification = {
     requestId?: string;
     invitationId?: string;
     actorUserId?: string;
+    expiresAt?: string;
     cheaterUserId?: string;
     mmrBefore?: number;
     mmrAfter?: number;
   };
+  actorUserId?: string;
+  actorDisplayName?: string;
   readAt?: string;
   createdAt: string;
 };

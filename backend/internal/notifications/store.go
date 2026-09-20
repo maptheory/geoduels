@@ -48,7 +48,10 @@ func (s *PGStore) ListUserNotifications(userID string, limit int) ([]contracts.U
 	}
 	out := make([]contracts.UserNotification, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, contracts.UserNotification{ID: row.ID, Type: string(row.Type), Payload: json.RawMessage(row.PayloadJson), CreatedAt: row.CreatedAt.Time})
+		out = append(out, contracts.UserNotification{
+			ID: row.ID, Type: string(row.Type), Payload: json.RawMessage(row.PayloadJson), CreatedAt: row.CreatedAt.Time,
+			ActorUserID: storekit.UUIDVal(row.ActorUserID), ActorDisplayName: strings.TrimSpace(row.ActorDisplayName),
+		})
 	}
 	return out, nil
 }
@@ -94,7 +97,10 @@ func (s *PGStore) ListNotificationInbox(userID string, limit int, beforeID int64
 	}
 	out := make([]contracts.UserNotification, 0, len(rows))
 	for _, row := range rows {
-		item := contracts.UserNotification{ID: row.ID, Type: string(row.Type), Category: string(row.Category), Payload: json.RawMessage(row.PayloadJson), CreatedAt: row.CreatedAt.Time}
+		item := contracts.UserNotification{
+			ID: row.ID, Type: string(row.Type), Category: string(row.Category), Payload: json.RawMessage(row.PayloadJson), CreatedAt: row.CreatedAt.Time,
+			ActorUserID: storekit.UUIDVal(row.ActorUserID), ActorDisplayName: strings.TrimSpace(row.ActorDisplayName),
+		}
 		if row.ReadAt.Valid {
 			value := row.ReadAt.Time
 			item.ReadAt = &value

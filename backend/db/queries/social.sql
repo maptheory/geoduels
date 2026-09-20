@@ -61,7 +61,7 @@ select u.id user_id,u.display_name,coalesce(u.avatar_url,'') avatar_url,coalesce
 select sequence,type,payload_json payload,created_at from user_events where user_id=$1 and sequence>$2 order by sequence limit $3;
 
 -- name: MarkFriendRequestNotificationRead :exec
-update user_notifications set read_at=coalesce(read_at,now()) where user_id=$1 and dedupe_key='friend_request:'||sqlc.arg(request_id);
+update user_notifications set read_at=coalesce(read_at,now()), payload_json=coalesce(payload_json,'{}'::jsonb)-'requestId' where dedupe_key='friend_request:'||sqlc.arg(request_id);
 
 -- name: MarkPartyInvitationNotificationRead :exec
 update user_notifications set read_at=coalesce(read_at,now()) where user_id=$1 and dedupe_key='party_invitation:'||sqlc.arg(invitation_id);

@@ -135,8 +135,9 @@ func ActiveSeasonID(ctx context.Context, source any) (string, error) {
 }
 
 // UpsertUserNotificationTx writes (or deduplicates) a user notification
-// inside the caller's transaction.
-func UpsertUserNotificationTx(ctx context.Context, tx pgx.Tx, userID, notificationType, dedupeKey string, payload any, id *int64) error {
+// inside the caller's transaction. actorUserID is stored on the row and
+// resolved to a display name at read time.
+func UpsertUserNotificationTx(ctx context.Context, tx pgx.Tx, userID, notificationType, dedupeKey string, payload any, actorUserID string, id *int64) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -145,10 +146,24 @@ func UpsertUserNotificationTx(ctx context.Context, tx pgx.Tx, userID, notificati
 	if err := u.Scan(strings.TrimSpace(userID)); err != nil {
 		return err
 	}
-	row, err := db.New(tx).UpsertUserNotification(ctx, db.UpsertUserNotificationParams{UserID: u, Type: db.GdNotificationType(notificationType), DedupeKey: dedupeKey, PayloadJson: body})
+	actor, err := optionalProfileUUID(actorUserID)
+	if err != nil {
+		return err
+	}
+	row, err := db.New(tx).UpsertUserNotification(ctx, db.UpsertUserNotificationParams{
+		UserID: u, Type: db.GdNotificationType(notificationType), DedupeKey: dedupeKey, PayloadJson: body, ActorUserID: actor,
+	})
 	if err != nil {
 		return err
 	}
 	*id = row
 	return nil
+}
+
+func optionalProfileUUID(value string) (pgtype.UUID, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.UUID{}, nil
+	}
+	return ProfileUUID(value)
 }

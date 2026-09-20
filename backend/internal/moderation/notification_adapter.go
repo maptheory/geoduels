@@ -37,7 +37,7 @@ func (a notificationTxAdapter) upsert(ctx context.Context, userID, typ, dedupe s
 	if err != nil {
 		return err
 	}
-	row, err := a.queries.UpsertUserNotification(ctx, db.UpsertUserNotificationParams{UserID: u, Type: db.GdNotificationType(typ), DedupeKey: dedupe, PayloadJson: body})
+	row, err := a.queries.UpsertUserNotification(ctx, db.UpsertUserNotificationParams{UserID: u, Type: db.GdNotificationType(typ), DedupeKey: dedupe, PayloadJson: body, ActorUserID: pgtype.UUID{}})
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func notificationItem(row db.ClaimPendingNotificationRow) contracts.Notification
 	return contracts.NotificationOutboxItem{ID: row.ID, Type: string(row.Type), PayloadJSON: json.RawMessage(row.PayloadJson), Attempts: int(row.Attempts)}
 }
 func upsertUserNotification(ctx context.Context, tx pgx.Tx, userID, notificationType, dedupeKey string, payload any, id *int64) error {
-	return storekit.UpsertUserNotificationTx(ctx, tx, userID, notificationType, dedupeKey, payload, id)
+	return storekit.UpsertUserNotificationTx(ctx, tx, userID, notificationType, dedupeKey, payload, "", id)
 }
 
 func notifyAccountEnforcement(ctx context.Context, tx pgx.Tx, userID, action, reason string, moderationLogID int64, endsAt any) error {

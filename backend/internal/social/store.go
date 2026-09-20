@@ -277,7 +277,7 @@ func (s *PGStore) SendFriendRequest(ctx context.Context, userID, targetID string
 	id, createdAt, expiresAt = storekit.UUIDVal(row.ID), row.CreatedAt.Time, row.ExpiresAt.Time
 	var notificationID int64
 	_ = storekit.UpsertUserNotificationTx(ctx, tx, targetID, "friend_request_received", "friend_request:"+id,
-		map[string]any{"requestId": id, "actorUserId": userID}, &notificationID)
+		map[string]any{"requestId": id, "expiresAt": expiresAt.UTC().Format(time.RFC3339)}, userID, &notificationID)
 	if err := tx.Commit(ctx); err != nil {
 		return FriendRequest{}, err
 	}
@@ -331,7 +331,7 @@ func (s *PGStore) RespondFriendRequest(ctx context.Context, userID, requestID, r
 		}
 		var notificationID int64
 		_ = storekit.UpsertUserNotificationTx(ctx, tx, otherID, "friendship_accepted", "friendship_accepted:"+requestID,
-			map[string]any{"actorUserId": userID}, &notificationID)
+			map[string]any{}, userID, &notificationID)
 	} else {
 		var affected int64
 		if response == "cancel" {
@@ -343,7 +343,7 @@ func (s *PGStore) RespondFriendRequest(ctx context.Context, userID, requestID, r
 			return ErrNotFound
 		}
 	}
-	_ = q.MarkFriendRequestNotificationRead(ctx, db.MarkFriendRequestNotificationReadParams{UserID: userUUID, RequestID: storekit.IngestText(requestID)})
+	_ = q.MarkFriendRequestNotificationRead(ctx, storekit.IngestText(requestID))
 	return tx.Commit(ctx)
 }
 
@@ -516,7 +516,7 @@ func (s *PGStore) CreatePartyInvitation(ctx context.Context, partyID, inviterID,
 	id, expiresAt = storekit.UUIDVal(row.ID), row.ExpiresAt.Time
 	var notificationID int64
 	_ = storekit.UpsertUserNotificationTx(ctx, tx, recipientID, "party_invitation_received", "party_invitation:"+id,
-		map[string]any{"invitationId": id, "actorUserId": inviterID}, &notificationID)
+		map[string]any{"invitationId": id}, inviterID, &notificationID)
 	if err := tx.Commit(ctx); err != nil {
 		return PartyInvitation{}, err
 	}

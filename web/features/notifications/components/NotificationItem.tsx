@@ -8,7 +8,7 @@ import { RelativeTime } from "../../../components/ui/RelativeTime";
 import { cn } from "../../../lib/cn";
 import type { FriendRequest, PartyInvitation, SocialSummary } from "../../social/types";
 
-export type NotificationRecord = { id: number; type: string; payload: Record<string, unknown>; createdAt: string; readAt?: string };
+export type NotificationRecord = { id: number; type: string; payload: Record<string, unknown>; createdAt: string; readAt?: string; actorUserId?: string; actorDisplayName?: string };
 export type NotificationFeedEntry =
   | { kind: "notification"; notification: NotificationRecord }
   | { kind: "friend_request"; request: FriendRequest }
@@ -18,6 +18,28 @@ type NotificationPresentation = { key: string; title: string; body?: string; hre
 
 function payloadString(payload: Record<string, unknown>, key: string) {
   return typeof payload[key] === "string" ? payload[key] : undefined;
+}
+
+function actorDisplayName(notification: NotificationRecord) {
+  return notification.actorDisplayName || payloadString(notification.payload, "actorDisplayName");
+}
+
+function playerHref(name?: string) {
+  return name ? `/players/${encodeURIComponent(name)}` : "/notifications";
+}
+
+function pendingFriendActions(payload: Record<string, unknown>): NotificationAction[] {
+  const requestId = payloadString(payload, "requestId");
+  if (!requestId) return [];
+  const expiresAt = payloadString(payload, "expiresAt");
+  if (expiresAt) {
+    const expires = Date.parse(expiresAt);
+    if (Number.isFinite(expires) && expires <= Date.now()) return [];
+  }
+  return [
+    { kind: "friend", id: requestId, value: "accept" },
+    { kind: "friend", id: requestId, value: "decline" },
+  ];
 }
 
 export function parseNotificationEntry(entry: NotificationFeedEntry): NotificationPresentation {
@@ -53,16 +75,16 @@ export function parseNotificationEntry(entry: NotificationFeedEntry): Notificati
 
   const { notification } = entry;
   const matchId = payloadString(notification.payload, "matchId");
-  const requestId = payloadString(notification.payload, "requestId");
   const invitationId = payloadString(notification.payload, "invitationId");
   const reason = payloadString(notification.payload, "reason");
+  const actorName = actorDisplayName(notification);
   const badge = notification.payload.badge as { label?: string; description?: string } | undefined;
   const base = { key: `notification:${notification.id}`, createdAt: notification.createdAt, unread: !notification.readAt };
   switch (notification.type) {
     case "friend_request_received":
-      return { ...base, title: "New friend request", body: "A player wants to add you.", href: "/notifications", icon: <Users size={16} />, actions: requestId ? [{ kind: "friend", id: requestId, value: "accept" }, { kind: "friend", id: requestId, value: "decline" }] : [] };
+      return { ...base, title: actorName ? `${actorName} sent a friend request` : "New friend request", body: actorName ? "Accept to add them to your friends list." : "A player wants to add you.", href: playerHref(actorName), icon: <Users size={16} />, actions: pendingFriendActions(notification.payload) };
     case "friendship_accepted":
-      return { ...base, title: "Friend request accepted", body: "You're now friends. ", href: "/notifications", icon: <Users size={16} />, actions: [] };
+      return { ...base, title: actorName ? `${actorName} accepted your friend request` : "Friend request accepted", body: "You're now friends.", href: playerHref(actorName), icon: <Users size={16} />, actions: [] };
     case "party_invitation_received":
       return { ...base, title: "New party invitation", body: "Join your friends for the next duel.", href: "/notifications", icon: <Users size={16} />, actions: invitationId ? [{ kind: "party", id: invitationId, value: "accept" }, { kind: "party", id: invitationId, value: "decline" }] : [] };
     case "badge_unlocked":

@@ -1143,12 +1143,14 @@ type AuthSessionParams struct {
 // Notification DTOs shared between the notifications domain service and the
 // persistence store.
 type UserNotification struct {
-	ID        int64           `json:"id"`
-	Type      string          `json:"type"`
-	Category  string          `json:"category,omitempty"`
-	Payload   json.RawMessage `json:"payload"`
-	ReadAt    *time.Time      `json:"readAt,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
+	ID               int64           `json:"id"`
+	Type             string          `json:"type"`
+	Category         string          `json:"category,omitempty"`
+	Payload          json.RawMessage `json:"payload"`
+	ReadAt           *time.Time      `json:"readAt,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	ActorUserID      string          `json:"actorUserId,omitempty"`
+	ActorDisplayName string          `json:"actorDisplayName,omitempty"`
 }
 
 const (
