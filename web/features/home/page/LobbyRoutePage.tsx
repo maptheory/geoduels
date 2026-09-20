@@ -1,38 +1,31 @@
-import Head from "next/head";
-import { useSiteURL } from "../../../lib/site";
+import { SocialPreviewHead } from "../../../components/SocialPreviewHead";
+import {
+  SOCIAL_ICON_IMAGE,
+  type SocialPreview,
+} from "../../../lib/social-preview";
 
 type LobbyRoutePageProps = {
   title: string;
   description: string;
   canonicalPath: string;
+  preview?: SocialPreview;
 };
 
 export default function LobbyRoutePage({
   title,
   description,
   canonicalPath,
+  preview,
 }: LobbyRoutePageProps) {
-  const siteURL = useSiteURL();
-  const canonicalURL = `${siteURL}${canonicalPath}`;
-
   return (
-    <>
-      <Head>
-        <title>{title}</title>
-        <meta name="description" content={description} />
-        <meta name="robots" content="index,follow" />
-        <link rel="canonical" href={canonicalURL} />
-        <meta property="og:type" content="website" />
-        <meta property="og:site_name" content="GeoDuels" />
-        <meta property="og:title" content={title} />
-        <meta property="og:description" content={description} />
-        <meta property="og:url" content={canonicalURL} />
-        <meta property="og:image" content={`${siteURL}/logo.v2.png`} />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content={title} />
-        <meta name="twitter:description" content={description} />
-        <meta name="twitter:image" content={`${siteURL}/logo.v2.png`} />
-      </Head>
-    </>
+    <SocialPreviewHead
+      {...(preview || {
+        title,
+        description,
+        canonicalPath,
+        robots: "index,follow",
+        ...SOCIAL_ICON_IMAGE,
+      })}
+    />
   );
 }

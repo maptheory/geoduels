@@ -1,9 +1,10 @@
-import Head from "next/head";
+import type { GetServerSideProps } from "next";
 import { useRouter } from "next/router";
 import { useMemo } from "react";
 import EndMatchOverlay from "../../features/game/components/overlays/EndMatchOverlay";
 import { Button, ButtonLink } from "../../components/ui/button";
 import { AppPanel } from "../../components/ui/compositions";
+import { SocialPreviewHead } from "../../components/SocialPreviewHead";
 import { Spinner } from "../../components/ui/Spinner";
 import type { Snapshot } from "../../features/game/model/types";
 import { requestMatchReport } from "../../features/auth/lib/auth-client";
@@ -16,12 +17,15 @@ import { useHomeModel } from "../../features/home/model/useHomeModel";
 import { useMatchRouteSession } from "../../features/matchmaking/hooks/use-match-route-session";
 import { getMatchReturnDestination } from "../../features/matchmaking/lib/match-return";
 import { useRuntimeConfig } from "../../lib/runtime-config-context";
-import { useSiteURL } from "../../lib/site";
 import { getTeamPresentation } from "../../lib/team-presentation";
 import {
   normalizeEntityRouteId,
   toPublicEntityId,
 } from "../../lib/entity-id";
+import { readServerConfig } from "../../lib/runtime-config.server";
+import { buildMatchSocialPreview } from "../../features/matchmaking/lib/match-social-preview";
+import { loadPublicMatchPreview } from "../../lib/social-preview-load";
+import type { SocialPreview } from "../../lib/social-preview";
 import type {
   MatchConfig,
 } from "../../features/matchmaking/lib/queue-client";
@@ -46,6 +50,27 @@ export function normalizeRouteMatchId(
   }
   return "";
 }
+
+type MatchPageProps = {
+  preview: SocialPreview;
+};
+
+export const getServerSideProps: GetServerSideProps<MatchPageProps> = async (ctx) => {
+  const routeId =
+    typeof ctx.params?.id === "string" ? ctx.params.id.trim() : "";
+  const resolved = await loadPublicMatchPreview(readServerConfig(), routeId);
+  const snapshot =
+    resolved?.status === "history" ? resolved.snapshot : null;
+  return {
+    props: {
+      preview: buildMatchSocialPreview(
+        snapshot,
+        resolved?.status || "missing",
+        routeId,
+      ),
+    },
+  };
+};
 
 function buildHistoryOverlay(
   snapshot: Snapshot,
@@ -147,7 +172,7 @@ function buildHistoryOverlay(
   };
 }
 
-export default function MatchPage() {
+export default function MatchPage({ preview }: MatchPageProps) {
   const router = useRouter();
   const routeMatchId = router.isReady
     ? normalizeRouteMatchId(router.query.id, router.asPath)
@@ -158,10 +183,6 @@ export default function MatchPage() {
   });
   const config = useRuntimeConfig();
   const routeSession = useMatchRouteSession(routeMatchId || null);
-  const siteURL = useSiteURL();
-  const canonicalURL = routeMatchId
-    ? `${siteURL}/match/${encodeURIComponent(toPublicEntityId(routeMatchId))}`
-    : `${siteURL}/`;
   const replacementReturnTarget =
     routeSession.replacement && "returnTarget" in routeSession.replacement
       ? routeSession.replacement.returnTarget
@@ -247,11 +268,7 @@ export default function MatchPage() {
 
   return (
     <>
-      <Head>
-        <title>GeoDuels | Match</title>
-        <meta name="robots" content="noindex,nofollow" />
-        <link rel="canonical" href={canonicalURL} />
-      </Head>
+      <SocialPreviewHead {...preview} />
       <main className="relative min-h-screen overflow-hidden bg-surface-page text-content-primary">
         <HomePageOverlays
           auth={model.view.auth}

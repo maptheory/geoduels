@@ -15,7 +15,7 @@ import 'leaflet/dist/leaflet.css';
 import 'easymde/dist/easymde.min.css';
 import '../styles/globals.css';
 
-export type NextPageWithLayout = NextPage & {
+export type NextPageWithLayout<P = object, IP = P> = NextPage<P, IP> & {
   getLayout?: (page: ReactElement) => ReactNode;
 };
 

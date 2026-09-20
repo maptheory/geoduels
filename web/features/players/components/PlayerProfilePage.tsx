@@ -1,12 +1,13 @@
 import { motion, useReducedMotion } from "framer-motion";
-import Head from "next/head";
 import { useRouter } from "next/router";
 import { useState } from "react";
 import { AppShell } from "../../app-shell/components/AppShell";
 import { AppContentRail } from "../../app-shell/components/AppContentRail";
+import { SocialPreviewHead } from "../../../components/SocialPreviewHead";
 import { AppPanel } from "../../../components/ui/compositions";
 import { CenteredSpinner } from "../../../components/ui/Spinner";
-import { useSiteURL } from "../../../lib/site";
+import { SOCIAL_ICON_IMAGE } from "../../../lib/social-preview";
+import { buildProfileSocialPreview } from "../lib/profile-social-preview";
 import { useProfileEditor } from "../hooks/use-profile-editor";
 import { usePlayerProfile } from "../hooks/use-player-profile";
 import { useAuthState } from "../../auth/components/AuthProvider";
@@ -21,9 +22,11 @@ import { ProfileSocialActions } from "../../social/components/ProfileSocialActio
 export function PlayerProfilePage({
   playerId,
   initialProfile,
+  previewMissing = false,
 }: {
   playerId: string;
   initialProfile?: PublicPlayerProfile;
+  previewMissing?: boolean;
 }) {
   const [historyFilter, setHistoryFilter] = useState<"all" | "ranked">("all");
   const { profileQuery, matchesQuery } = usePlayerProfile(
@@ -42,7 +45,7 @@ export function PlayerProfilePage({
   );
   const matches = matchesQuery.data?.pages.flatMap((page) => page.matches) || [];
   const profilePath = `/players/${encodeURIComponent(profile?.displayName || playerId)}`;
-  if (!playerId || profileQuery.isLoading) {
+  if (!playerId || (profileQuery.isLoading && !previewMissing)) {
     return (
       <AppShell activeNavRoute={null}>
         <ProfileMain>
@@ -54,10 +57,13 @@ export function PlayerProfilePage({
   if (profileQuery.isError || !profile) {
     return (
       <AppShell activeNavRoute={null}>
-        <Head>
-          <title>Player not found | GeoDuels</title>
-          <meta name="robots" content="noindex" />
-        </Head>
+        <SocialPreviewHead
+          title="Player not found | GeoDuels"
+          description="This profile does not exist or is no longer available."
+          canonicalPath={playerId ? `/players/${encodeURIComponent(playerId)}` : "/"}
+          robots="noindex"
+          {...SOCIAL_ICON_IMAGE}
+        />
         <ProfileMain>
           <AppPanel className="rounded-2xl p-10 text-center">
             <h1 className="text-heading-lg font-strong text-content-primary">Player not found</h1>
@@ -105,26 +111,7 @@ function ProfileMetadata({
   profile: PublicPlayerProfile;
   path: string;
 }) {
-  const siteURL = useSiteURL();
-  const winRate = profile.gamesPlayed
-    ? Math.round((profile.wins / profile.gamesPlayed) * 100)
-    : 0;
-  const description = `${profile.mmr} MMR · ${profile.gamesPlayed} duels · ${winRate}% duel win rate`;
-  return (
-    <Head>
-      <title>{profile.displayName} | GeoDuels</title>
-      <meta name="description" content={`${profile.displayName} has ${description}.`} />
-      <meta name="robots" content="index,follow" />
-      <link rel="canonical" href={`${siteURL}${path}`} />
-      <meta property="og:title" content={`${profile.displayName} | GeoDuels`} />
-      <meta property="og:description" content={description} />
-      <meta property="og:url" content={`${siteURL}${path}`} />
-      <meta
-        property="og:image"
-        content={profile.avatarUrl || `${siteURL}/logo.v2.png`}
-      />
-    </Head>
-  );
+  return <SocialPreviewHead {...buildProfileSocialPreview(profile, path)} />;
 }
 
 function ProfileMain({ children }: { children: React.ReactNode }) {
