@@ -641,7 +641,14 @@ type BootstrapPreferences struct {
 	Value    json.RawMessage `json:"value"`
 }
 
+type CurrentParty struct {
+	ID         string `json:"id"`
+	InviteCode string `json:"inviteCode"`
+}
+
 type BootstrapActivity struct {
+	// Included only in bootstrap v2; v1 retains its original JSON shape.
+	CurrentParty  *CurrentParty             `json:"currentParty,omitempty"`
 	ActiveMatch   *ResumableSessionResponse `json:"activeMatch"`
 	Notifications []UserNotification        `json:"notifications"`
 }

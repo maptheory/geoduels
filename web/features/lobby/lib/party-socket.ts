@@ -5,6 +5,7 @@ import type { PartyEvent, PartyMode, PartyTeamId } from "./party-client";
 
 type PartyCommandPayloads = {
   team: { teamId: PartyTeamId };
+  shuffle_teams: Record<string, never>;
   settings: { config: MatchConfig; mode?: PartyMode };
   kick: { userId: string };
   transfer_owner: { userId: string };

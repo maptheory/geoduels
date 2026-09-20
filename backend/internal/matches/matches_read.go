@@ -77,26 +77,24 @@ func (s *PGStore) ListPlayerMatchHistoryPage(id string, l int, b time.Time, bid 
 	if e != nil {
 		return MatchHistoryPage{}, e
 	}
-	var rs []db.ListPlayerMatchHistoryBasicRow
-	if rk {
-		xs, ee := s.db.ListPlayerMatchHistoryRanked(context.Background(), db.ListPlayerMatchHistoryRankedParams{UserID: u, Limit: int32(l + 1)})
-		e = ee
-		for _, x := range xs {
-			rs = append(rs, db.ListPlayerMatchHistoryBasicRow{MatchID: x.MatchID, Mode: x.Mode, StartedAt: x.StartedAt, EndedAt: x.EndedAt, WinnerUserID: x.WinnerUserID, Outcome: x.Outcome, Ranked: x.Ranked, RankedDelta: x.RankedDelta, TotalScore: x.TotalScore, OpponentUserID: x.OpponentUserID, OpponentDisplayName: x.OpponentDisplayName})
-		}
-	} else if !b.IsZero() && bid != "" {
-		v, e2 := mu(bid)
-		if e2 != nil {
-			return MatchHistoryPage{}, e2
-		}
-		xs, ee := s.db.ListPlayerMatchHistoryBefore(context.Background(), db.ListPlayerMatchHistoryBeforeParams{UserID: u, Limit: int32(l + 1), CursorEndedAt: pgtype.Timestamptz{Time: b, Valid: true}, CursorMatchID: v})
-		e = ee
-		for _, x := range xs {
-			rs = append(rs, db.ListPlayerMatchHistoryBasicRow{MatchID: x.MatchID, Mode: x.Mode, StartedAt: x.StartedAt, EndedAt: x.EndedAt, WinnerUserID: x.WinnerUserID, Outcome: x.Outcome, Ranked: x.Ranked, RankedDelta: x.RankedDelta, TotalScore: x.TotalScore, OpponentUserID: x.OpponentUserID, OpponentDisplayName: x.OpponentDisplayName})
-		}
-	} else {
-		rs, e = s.db.ListPlayerMatchHistoryBasic(context.Background(), db.ListPlayerMatchHistoryBasicParams{UserID: u, Limit: int32(l + 1)})
+	var cursorEndedAt pgtype.Timestamptz
+	if !b.IsZero() {
+		cursorEndedAt = pgtype.Timestamptz{Time: b, Valid: true}
 	}
+	var cursorMatchID pgtype.UUID
+	if bid != "" {
+		cursorMatchID, e = mu(bid)
+		if e != nil {
+			return MatchHistoryPage{}, e
+		}
+	}
+	rs, e := s.db.ListPlayerMatchHistoryPage(context.Background(), db.ListPlayerMatchHistoryPageParams{
+		UserID:        u,
+		RankedOnly:    rk,
+		CursorEndedAt: cursorEndedAt,
+		CursorMatchID: cursorMatchID,
+		RowLimit:      int32(l + 1),
+	})
 	if e != nil {
 		return MatchHistoryPage{}, e
 	}

@@ -71,6 +71,7 @@ type Props = {
     mode?: PartyMode,
   ) => Promise<void>;
   switchPartyTeam?: (teamId: PartyTeamId) => Promise<void>;
+  shufflePartyTeams?: () => Promise<void>;
   queueError: string;
   singleplayerError: string;
   onlinePlayers: number;
@@ -129,6 +130,7 @@ export default function LobbyScreen({
   startParty = async () => {},
   updatePartySettings = async () => {},
   switchPartyTeam = async () => {},
+  shufflePartyTeams = async () => {},
   queueError,
   singleplayerError,
   onBrowseLeaderboard,
@@ -233,10 +235,12 @@ export default function LobbyScreen({
       kickPartyMember={kickPartyMember}
       leaveParty={leaveParty}
       party={party}
+      mapPickerOpen={mapPickerOpen}
       setMapPickerOpen={setMapPickerOpen}
       startParty={startParty}
       state={partyPanelState}
       switchPartyTeam={switchPartyTeam}
+      shufflePartyTeams={shufflePartyTeams}
       transferPartyOwner={transferPartyOwner}
       userId={userId}
       accessToken={accessToken}

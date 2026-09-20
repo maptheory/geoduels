@@ -658,6 +658,10 @@ export function useHomeModel(options?: {
     await partyController.switchTeam(teamId);
   };
 
+  const shufflePartyTeams = async () => {
+    await partyController.shuffleTeams();
+  };
+
   const reportPlayer = async (
     reportedUserId: string,
     category = "cheating",
@@ -749,6 +753,7 @@ export function useHomeModel(options?: {
       startParty,
       updatePartySettings,
       switchPartyTeam,
+      shufflePartyTeams,
       placeGuess: gameController.placeGuess,
       pingTeam: gameController.pingTeam,
       finalizeGuess: gameController.finalizeGuess,

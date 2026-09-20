@@ -1,3 +1,4 @@
+import type { PartyAssignment } from '../../lobby/lib/party-client';
 import type { Snapshot } from '../../game/model/types';
 import { ObservableStore } from '../../../lib/observable-store';
 import type { AuthSessionSnapshot } from '../../auth/session';
@@ -107,6 +108,21 @@ export class MatchRouteController extends ObservableStore<MatchRouteState> {
     void this.resolve(nextMatchId);
   };
 
+  acceptPartyAssignment = async (assignment: PartyAssignment) => {
+    this.clearPendingWork();
+    const seq = this.resolveSeq;
+    this.patchState({ targetMatchId: assignment.matchId, status: 'awaiting_first_snapshot', historySnapshot: null, replacement: null });
+    const current = this.matchController.getState();
+    // A refresh on the live match may already have established its connection.
+    if (current.activeMatchId === assignment.matchId && current.connected) {
+      if (current.snapshot?.matchId === assignment.matchId) this.patchState({ status: 'idle' });
+      return true;
+    }
+    const ok = await this.matchController.resumeResolvedMatch(assignment, { playMatchFoundSfx: true });
+    if (!ok && seq === this.resolveSeq) this.patchState({ status: 'missing' });
+    return ok;
+  };
+
   reset = () => {
     this.clearPendingWork();
     this.patchState(initialState);
@@ -120,6 +136,7 @@ export class MatchRouteController extends ObservableStore<MatchRouteState> {
   }
 
   private clearPendingWork() {
+    this.resolveSeq += 1;
     this.requestController?.abort();
     this.requestController = null;
   }

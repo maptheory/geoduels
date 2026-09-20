@@ -610,11 +610,9 @@ export class GameController extends ObservableStore<GameState> {
         roundId: snapshot.currentRound.roundId,
         lat,
         lng
-      },
-      { errorMessage: this.config.gameConnectionErrorMessage, forceReconnect: true }
+      }
     );
     if (!sent) return;
-    this.matchController.setConnectionIssue('');
     this.patchState({ guess: { lat, lng } });
   };
 
@@ -624,8 +622,7 @@ export class GameController extends ObservableStore<GameState> {
     if (snapshot?.mode !== 'team_duel' || snapshot.phase !== 'live' || snapshot.roundPhase !== 'round_live' || !snapshot.currentRound || !snapshot.players[userId]?.finalized) return;
     this.matchController.sendGameCommand(
       'team.ping',
-      { roundId: snapshot.currentRound.roundId, lat, lng },
-      { errorMessage: this.config.gameConnectionErrorMessage, forceReconnect: true }
+      { roundId: snapshot.currentRound.roundId, lat, lng }
     );
   };
 
@@ -641,11 +638,9 @@ export class GameController extends ObservableStore<GameState> {
         roundId: snapshot.currentRound.roundId,
         lat: this.state.guess.lat,
         lng: this.state.guess.lng
-      },
-      { errorMessage: this.config.gameConnectionErrorMessage, forceReconnect: true }
+      }
     );
     if (!sent) return;
-    this.matchController.setConnectionIssue('');
     this.playGuessSfx(snapshot.matchId, snapshot.currentRound.roundId, userId);
     this.patchState({ guessSubmitted: true });
   };
@@ -656,11 +651,9 @@ export class GameController extends ObservableStore<GameState> {
     if (!snapshot?.matchId || snapshot.mode !== 'singleplayer' || snapshot.phase !== 'round_result') return false;
     const sent = this.matchController.sendGameCommand(
       'round.advance',
-      { userId, matchId: snapshot.matchId },
-      { errorMessage: this.config.gameConnectionErrorMessage, forceReconnect: true }
+      { userId, matchId: snapshot.matchId }
     );
     if (!sent) return false;
-    this.matchController.setConnectionIssue('');
     return true;
   };
 
@@ -683,11 +676,9 @@ export class GameController extends ObservableStore<GameState> {
     if (!snapshot?.matchId || snapshot.state === 'ended') return false;
     const sent = this.matchController.sendGameCommand(
       'match.forfeit',
-      { userId, matchId: snapshot.matchId },
-      { errorMessage: this.config.gameConnectionErrorMessage, forceReconnect: true }
+      { userId, matchId: snapshot.matchId }
     );
     if (!sent) return false;
-    this.matchController.setConnectionIssue('');
     return true;
   };
 

@@ -1,6 +1,12 @@
 -- name: AddPartyOwner :exec
-INSERT INTO party_members (party_id, user_id, role, ready, team_id)
-VALUES ($1, $2, 'owner', false, 'a');
+WITH member AS (
+    INSERT INTO party_members (party_id, user_id, role, ready, team_id)
+    VALUES ($1, $2, 'owner', false, 'a')
+    RETURNING user_id, party_id
+)
+INSERT INTO current_parties (user_id, party_id)
+SELECT user_id, party_id FROM member
+ON CONFLICT (user_id) DO UPDATE SET party_id = excluded.party_id;
 
 -- name: CloseInactiveOpenParties :execrows
 UPDATE parties SET state = 'closed', updated_at = now()
@@ -74,6 +80,7 @@ SELECT state, expires_at FROM parties WHERE id = $1;
 SELECT state, owner_user_id FROM parties WHERE id = $1;
 
 -- name: JoinPartyMember :exec
+WITH member AS (
 INSERT INTO party_members(party_id, user_id, role, ready, team_id, left_at)
 VALUES($1, $2, $3, false, (
     SELECT CASE
@@ -87,7 +94,12 @@ ON CONFLICT (party_id, user_id) DO UPDATE SET
     role = CASE WHEN party_members.role = 'owner' THEN 'owner'::gd_party_role ELSE excluded.role END,
     team_id = COALESCE(party_members.team_id, excluded.team_id),
     left_at = NULL,
-    joined_at = CASE WHEN party_members.left_at IS NULL THEN party_members.joined_at ELSE now() END;
+    joined_at = CASE WHEN party_members.left_at IS NULL THEN party_members.joined_at ELSE now() END
+RETURNING user_id, party_id
+)
+INSERT INTO current_parties (user_id, party_id)
+SELECT user_id, party_id FROM member
+ON CONFLICT (user_id) DO UPDATE SET party_id = excluded.party_id;
 
 -- name: KickPartyMember :execrows
 UPDATE party_members SET left_at = now(), ready = false
@@ -197,3 +209,12 @@ WHERE id = $1 AND state IN ('open', 'in_match', 'started');
 
 -- name: TransferPartyOwner :exec
 UPDATE parties SET owner_user_id = $2, updated_at = now() WHERE id = $1;
+
+-- name: GetCurrentParty :one
+SELECT p.id, p.invite_code
+FROM current_parties c
+JOIN parties p ON p.id = c.party_id
+JOIN party_members m ON m.party_id = c.party_id AND m.user_id = c.user_id
+WHERE c.user_id = $1 AND m.left_at IS NULL
+  AND p.state IN ('open', 'in_match', 'started')
+  AND (p.state <> 'open' OR p.expires_at > now());

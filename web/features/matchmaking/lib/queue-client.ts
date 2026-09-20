@@ -313,7 +313,10 @@ export async function fetchMatchSession(
     signal
   });
   if (!resp.ok) {
-    return { status: 'missing', matchId };
+    if (resp.status === 401) return { status: 'live_auth_required', matchId };
+    if (resp.status === 403) return { status: 'forbidden', matchId };
+    if (resp.status === 404 || resp.status === 410) return { status: 'missing', matchId };
+    throw new Error('Match session temporarily unavailable');
   }
   return normalizeMatchSessionResponse(await resp.json(), matchId);
 }

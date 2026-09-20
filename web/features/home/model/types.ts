@@ -196,6 +196,7 @@ export type HomeActions = {
   startParty: () => Promise<void>;
   updatePartySettings: (config: MatchConfig, mode?: PartyMode) => Promise<void>;
   switchPartyTeam: (teamId: PartyTeamId) => Promise<void>;
+  shufflePartyTeams: () => Promise<void>;
   placeGuess: (lat: number, lng: number) => void;
   pingTeam: (lat: number, lng: number) => void;
   finalizeGuess: () => void;

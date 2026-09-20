@@ -150,6 +150,7 @@ export function deriveHomeModel({
     uiPhase === "round_result" ||
     uiPhase === "match_end";
   const canFinalizeGuess =
+    match.connected &&
     !!snapshot?.currentRound &&
     !!game.guess &&
     !game.guessSubmitted &&
@@ -157,6 +158,7 @@ export function deriveHomeModel({
     snapshot.roundPhase === "round_live" &&
     uiPhase === "live_round";
   const canAdvanceRound =
+    match.connected &&
     isSingleplayer &&
     snapshot?.phase === "round_result" &&
     snapshot.state !== "ended";

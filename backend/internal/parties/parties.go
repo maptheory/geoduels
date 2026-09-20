@@ -103,6 +103,24 @@ func (s *PGStore) CreateParty(ownerUserID string, mode contracts.MatchMode, mapS
 	return contracts.PartySnapshot{}, errors.New("could not allocate party invite code")
 }
 
+// GetCurrentParty never falls back to memberships predating an explicit selection.
+func (s *PGStore) GetCurrentParty(userID string) (*contracts.CurrentParty, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	id, err := profileUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+	row, err := s.db.GetCurrentParty(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &contracts.CurrentParty{ID: row.ID.String(), InviteCode: row.InviteCode}, nil
+}
+
 func (s *PGStore) GetPartyByID(partyID string) (contracts.PartySnapshot, bool, error) {
 	partyID = strings.TrimSpace(partyID)
 	if partyID == "" {
@@ -328,6 +346,41 @@ func (s *PGStore) LeaveParty(partyID, userID string) (contracts.PartySnapshot, e
 		return contracts.PartySnapshot{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
+		return contracts.PartySnapshot{}, err
+	}
+	next, _, err := s.GetPartyByID(partyID)
+	return next, err
+}
+
+func (s *PGStore) ShufflePartyTeams(partyID, ownerUserID string) (contracts.PartySnapshot, error) {
+	partyID = strings.TrimSpace(partyID)
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if partyID == "" || ownerUserID == "" {
+		return contracts.PartySnapshot{}, errors.New("invalid party")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := s.ensurePartyOwner(ctx, partyID, ownerUserID); err != nil {
+		return contracts.PartySnapshot{}, err
+	}
+	snap, found, err := s.GetPartyByID(partyID)
+	if err != nil {
+		return contracts.PartySnapshot{}, err
+	}
+	if !found {
+		return contracts.PartySnapshot{}, pgx.ErrNoRows
+	}
+	if snap.Mode != contracts.ModeTeamDuel {
+		return contracts.PartySnapshot{}, errors.New("shuffle is only available in team duels")
+	}
+	partyUUID, err := profileUUID(partyID)
+	if err != nil {
+		return contracts.PartySnapshot{}, err
+	}
+	if err := s.db.ShufflePartyTeams(ctx, partyUUID); err != nil {
+		return contracts.PartySnapshot{}, err
+	}
+	if err := s.db.TouchOpenParty(ctx, partyUUID); err != nil {
 		return contracts.PartySnapshot{}, err
 	}
 	next, _, err := s.GetPartyByID(partyID)

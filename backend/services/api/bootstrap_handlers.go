@@ -13,10 +13,21 @@ import (
 )
 
 func (a *api) bootstrap(c echo.Context) error {
+	switch c.QueryParam("version") {
+	case "", "1":
+		return a.bootstrapVersion(c, 1)
+	case "2":
+		return a.bootstrapVersion(c, 2)
+	default:
+		return plainTextError(c, http.StatusBadRequest, "unsupported bootstrap version")
+	}
+}
+
+func (a *api) bootstrapVersion(c echo.Context, version int) error {
 	r := c.Request()
 	global := a.statusHub().current()
 	response := contracts.BootstrapResponse{
-		Version:  1,
+		Version:  version,
 		Activity: contracts.BootstrapActivity{Notifications: []contracts.UserNotification{}},
 		Global: contracts.BootstrapGlobal{
 			OnlinePlayers: global.OnlinePlayers,
@@ -60,6 +71,13 @@ func (a *api) bootstrap(c echo.Context) error {
 		if preferences, err := a.preferences.Get(r.Context(), record.UserID); err == nil {
 			response.Preferences = &contracts.BootstrapPreferences{Revision: preferences.Revision, Value: preferences.Preferences}
 		}
+	}
+	if version >= 2 && a.parties != nil {
+		party, err := a.parties.GetCurrentParty(record.UserID)
+		if err != nil {
+			return plainTextError(c, http.StatusInternalServerError, "party restoration unavailable")
+		}
+		response.Activity.CurrentParty = party
 	}
 	response.Activity.ActiveMatch = a.activeMatch(r, record.UserID)
 	if !profile.IsGuest {

@@ -111,8 +111,38 @@ body {
   }
 }
 
+/* Fixed column widths with centered wrapping keep incomplete roster rows centered. */
+.party-profile-grid {
+  --profile-columns: 2;
+  --profile-gap: 0.75rem;
+}
+
+.party-profile-grid-players {
+  --profile-gap: 1rem;
+}
+
+.party-profile-grid > div {
+  flex: 0 0 calc((100% - (var(--profile-columns) - 1) * var(--profile-gap)) / var(--profile-columns));
+}
+
+@media (min-width: 640px) {
+  .party-profile-grid-players {
+    --profile-columns: 3;
+  }
+}
+
+@media (min-width: 1024px) {
+  .party-profile-grid-teams {
+    --profile-columns: 3;
+  }
+
+  .party-profile-grid-players {
+    --profile-columns: 4;
+  }
+}
+
 .party-team-grid {
-  grid-template-rows: auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 768px) {

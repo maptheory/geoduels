@@ -67,6 +67,8 @@ func (q *matchCoordinator) executePartyCommand(ctx context.Context, partyID, use
 			return errors.New("invalid payload")
 		}
 		_, err = q.parties.SetPartyMemberTeam(partyID, userID, strings.TrimSpace(req.TeamID))
+	case "shuffle_teams":
+		_, err = q.parties.ShufflePartyTeams(partyID, userID)
 	case "settings":
 		var req partySettingsRequest
 		if json.Unmarshal(command.Payload, &req) != nil {

@@ -67,9 +67,7 @@ export function MapPickerModal({
           ) : (
             <div className="mt-5 grid max-h-[56vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
               {readyMaps.map((item) => (
-                <div key={item.id} className="overflow-hidden rounded-2xl">
-                  <MapCard item={item} mode="select" selected={item.id === partyConfig.mapId} thumbnailURL={thumbnailURL} onSelect={selectMapForParty} />
-                </div>
+                <MapCard key={item.id} item={item} mode="select" selected={item.id === partyConfig.mapId} thumbnailURL={thumbnailURL} onSelect={selectMapForParty} />
               ))}
             </div>
           )}

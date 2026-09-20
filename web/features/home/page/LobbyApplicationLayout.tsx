@@ -103,11 +103,11 @@ export function LobbyApplicationLayout({ children }: { children: ReactNode }) {
     const nextMatchId = model.view.meta.activeMatchId;
     const prevMatchId = prevMatchIdRef.current;
     prevMatchIdRef.current = nextMatchId;
-    if (!nextMatchId || nextMatchId === prevMatchId) return;
+    if (!nextMatchId || nextMatchId === prevMatchId || model.view.meta.sourcePartyInviteCode) return;
     void router.push(
       `/match/${encodeURIComponent(toPublicEntityId(nextMatchId))}`,
     );
-  }, [model.view.meta.activeMatchId, router]);
+  }, [model.view.meta.activeMatchId, model.view.meta.sourcePartyInviteCode, router]);
 
   return (
     <>

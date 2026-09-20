@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import { IconButton } from "./button";
@@ -78,7 +79,10 @@ export default function AppModalShell({
     return () => { window.removeEventListener("keydown", onKeyDown); previousFocus.current?.focus(); };
   }, [requestClose]);
 
-  return (
+  // Portal to body so the modal escapes ancestor stacking contexts (e.g. z-content
+  // panels); otherwise fixed overlays like the bottom nav paint above it.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <motion.div
       variants={{ open: { opacity: 1 }, closed: { opacity: 0 } }}
       initial="closed"
@@ -137,6 +141,7 @@ export default function AppModalShell({
         ) : null}
         <div className={contentClassName}>{children}</div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   );
 }

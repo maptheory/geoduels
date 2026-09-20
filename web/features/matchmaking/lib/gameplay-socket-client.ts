@@ -1,11 +1,10 @@
 import type { Snapshot, TeamPing } from '../../game/model/types';
 import type { RuntimeConfig } from '../../../lib/runtime-config';
 import { normalizeWSBase } from '../../../lib/runtime-config';
-import type { AuthSessionSnapshot } from '../../auth/session';
 
 type Handlers = {
   onOpen: () => void;
-  onClose: (event: { expected: boolean }) => void;
+  onClose: () => void;
   onError: () => void;
   onActivity: () => void;
   onSnapshot: (snapshot: Snapshot) => void;
@@ -14,13 +13,8 @@ type Handlers = {
   onProtocolError: () => void;
 };
 
-type ManagedSocket = {
-  ws: WebSocket;
-  expectedClose: boolean;
-};
-
 export class GameplaySocketClient {
-  private socket: ManagedSocket | null = null;
+  private socket: WebSocket | null = null;
   private readonly config: RuntimeConfig;
   private readonly handlers: Handlers;
 
@@ -29,34 +23,32 @@ export class GameplaySocketClient {
     this.handlers = handlers;
   }
 
-  connect(session: AuthSessionSnapshot, node: string, wsPath: string, ticket: string) {
+  connect(node: string, wsPath: string, ticket: string) {
     const base = normalizeWSBase(this.config.realtimeBaseURL).replace(/\/$/, '');
     const path = (wsPath || `/ws/${node}`).startsWith('/') ? (wsPath || `/ws/${node}`) : `/${wsPath || `ws/${node}`}`;
     const target = `${base}${path}?ticket=${encodeURIComponent(ticket)}`;
-    this.close(true);
+    this.close();
     const ws = new WebSocket(target);
-    const managed: ManagedSocket = { ws, expectedClose: false };
-    this.socket = managed;
+    this.socket = ws;
 
     ws.onopen = () => {
-      if (this.socket?.ws !== ws) return;
+      if (this.socket !== ws) return;
       this.handlers.onOpen();
     };
 
     ws.onerror = () => {
-      if (this.socket?.ws !== ws) return;
+      if (this.socket !== ws) return;
       this.handlers.onError();
     };
 
     ws.onclose = () => {
-      if (this.socket?.ws === ws) {
-        this.socket = null;
-      }
-      this.handlers.onClose({ expected: managed.expectedClose });
+      if (this.socket !== ws) return;
+      this.socket = null;
+      this.handlers.onClose();
     };
 
     ws.onmessage = (evt) => {
-      if (this.socket?.ws !== ws) return;
+      if (this.socket !== ws) return;
       let msg: any;
       try {
         msg = JSON.parse(evt.data);
@@ -89,26 +81,25 @@ export class GameplaySocketClient {
   }
 
   isOpen() {
-    return !!this.socket?.ws && this.socket.ws.readyState === WebSocket.OPEN;
+    return !!this.socket && this.socket.readyState === WebSocket.OPEN;
   }
 
-  isOpenOrConnecting() {
-    return !!this.socket?.ws && (this.socket.ws.readyState === WebSocket.OPEN || this.socket.ws.readyState === WebSocket.CONNECTING);
+  isConnecting() {
+    return !!this.socket && this.socket.readyState === WebSocket.CONNECTING;
   }
 
   send(command: Record<string, unknown>) {
-    if (!this.socket?.ws || this.socket.ws.readyState !== WebSocket.OPEN) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       return false;
     }
-    this.socket.ws.send(JSON.stringify(command));
+    this.socket.send(JSON.stringify(command));
     return true;
   }
 
-  close(expected = true) {
+  close() {
     const current = this.socket;
     this.socket = null;
     if (!current) return;
-    current.expectedClose = expected;
-    current.ws.close();
+    current.close();
   }
 }

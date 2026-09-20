@@ -1,4 +1,3 @@
-import Link from "next/link";
 import React, { useState } from "react";
 import { ArrowLeft, ChartNoAxesColumnIncreasing, Check, Clock3, Flame, Heart, Map as MapIcon, Pencil, Play, Search, Star, Trophy, Upload, X } from "lucide-react";
 import PlayerProfileLink from "../../../players/components/PlayerProfileLink";
@@ -20,6 +19,7 @@ import { MapComments } from "./MapComments";
 import { MapEditMetadataModal } from "./MapEditMetadataModal";
 import { CenteredSpinner } from "../../../../components/ui/Spinner";
 import { FileInputTrigger } from "../../../../components/ui/FileInputTrigger";
+import { MapPreview } from "./MapPreview";
 import styles from "./MapPanels.module.css";
 
 export type MapScopeLabel = { scope: MapScope; label: string };
@@ -150,30 +150,34 @@ export function MapCard({
   thumbnailURL,
   onSelect,
   showAuthor = true,
+  disabled,
+  className,
 }: {
   item: CustomMap;
   selected?: boolean;
-  mode: "link" | "select";
+  mode: "link" | "select" | "edit";
   thumbnailURL: (item: Pick<CustomMap, "thumbnailVariant" | "thumbnailKey">) => string;
   onSelect?: (item: CustomMap) => void;
   showAuthor?: boolean;
+  disabled?: boolean;
+  className?: string;
 }) {
-  const content = (
-    <AppPanel
-      as="div"
-      className={cn(
-        "group relative h-44 overflow-hidden rounded-xl text-left",
-        "transition duration-normal hover:-translate-y-0.5",
-        selected && "ring-2 ring-status-success",
-      )}
+  return (
+    <MapPreview
+      name={item.displayName}
+      imageURL={thumbnailURL(item)}
+      selected={selected}
+      href={mode === "link" ? `/maps/${encodeURIComponent(toPublicEntityId(item.id))}` : undefined}
+      onClick={mode !== "link" ? () => onSelect?.(item) : undefined}
+      disabled={disabled}
+      className={className}
+      actionLabel={mode === "edit" ? "Change map" : undefined}
     >
-      <img
-        src={thumbnailURL(item)}
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover opacity-90 transition duration-emphasis group-hover:scale-105"
-      />
-      <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-scrim via-transparent to-transparent" />
-
+      {mode === "edit" ? (
+        <span aria-hidden="true" className="absolute left-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border-default bg-scrim text-content-primary shadow-elev-1">
+          <Pencil size={20} />
+        </span>
+      ) : null}
       <div className="absolute right-3 top-3 flex flex-wrap justify-end gap-2">
         {item.system || item.official ? (
           <Tooltip content="Official map">
@@ -213,23 +217,7 @@ export function MapCard({
           <MapDifficulty difficulty={item.difficulty} className="justify-end" />
         </div>
       </div>
-    </AppPanel>
-  );
-
-  if (mode === "select") {
-    return (
-      <Button type="button" variant="ghost" onClick={() => onSelect?.(item)} className="block w-full text-left">
-        {content}
-      </Button>
-    );
-  }
-  return (
-    <Link
-      href={`/maps/${encodeURIComponent(toPublicEntityId(item.id))}`}
-      className="block w-full text-left"
-    >
-      {content}
-    </Link>
+    </MapPreview>
   );
 }
 
@@ -292,14 +280,13 @@ export function MapsPanel({
           ) : (
             <div className={cn("gap-4", styles.mapGrid)}>
               {readyMaps.map((item) => (
-                <div key={item.id} className="overflow-hidden rounded-xl">
-                  <MapCard
+                <MapCard
+                    key={item.id}
                     item={item}
                     mode={partyActive ? "select" : "link"}
                     thumbnailURL={thumbnailURL}
                     onSelect={selectMapForParty}
-                  />
-                </div>
+                />
               ))}
             </div>
           )}

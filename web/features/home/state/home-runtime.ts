@@ -34,6 +34,7 @@ function createHomeRuntime(config: RuntimeConfig): HomeRuntime {
     onResetSession: () => {
       runtime.matchController.resetConnectionState();
       runtime.partyController?.reset();
+      runtime.matchRouteController?.reset();
       runtime.chatController?.reset();
     }
   });
@@ -45,7 +46,7 @@ function createHomeRuntime(config: RuntimeConfig): HomeRuntime {
   runtime.partyController = new PartyController({
     config,
     sessionController: runtime.sessionController,
-    matchController: runtime.matchController
+    onMatchAssigned: (assignment) => runtime.matchRouteController.acceptPartyAssignment(assignment)
   });
   runtime.matchRouteController = new MatchRouteController({
     config,

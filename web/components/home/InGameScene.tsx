@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AppPanel } from '../ui/compositions';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/button';
-import { AlertTriangle, Flag, LogOut, X } from 'lucide-react';
+import { AlertTriangle, LogOut, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import GameHUD from '../../features/game/components/overlays/GameHUD';
 import MinimapPanel from '../../features/game/components/overlays/MinimapPanel';
@@ -168,7 +168,7 @@ export default function InGameScene({
   const extensionRequired = ruleset === "no_move" || streetNames === "hidden";
   const streetViewReady = !extensionRequired || extension.configured;
   const canShowForfeit = uiPhase !== 'match_end';
-  const disableStreetViewTabbing = !streetViewInteractive;
+  const disableStreetViewTabbing = uiPhase !== 'live_round' || !streetViewInteractive;
   const utilityControlPosition = 'absolute left-3 top-3 z-game-controls pointer-events-auto md:bottom-4 md:left-4 md:top-auto';
 
   const releaseStreetViewFocus = useCallback(() => {
@@ -276,7 +276,7 @@ export default function InGameScene({
       className={`fixed inset-0 overflow-hidden focus:outline-none ${motionPresetClass.reveal}`}
     >
       {(uiPhase === 'live_round' || uiPhase === 'prematch_countdown') && (
-        <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0 overflow-hidden bg-surface-page">
           <iframe
             key={`${streetViewFrameSrc}-${streetViewResetCount}`}
             ref={streetViewFrameRef}
@@ -285,7 +285,8 @@ export default function InGameScene({
             tabIndex={disableStreetViewTabbing ? -1 : undefined}
             onFocus={disableStreetViewTabbing ? releaseStreetViewFocus : undefined}
             onLoad={extension.onFrameLoad}
-            className={`absolute left-0 top-[-75px] h-[calc(100%+75px)] w-full border-0 ${streetViewInteractive ? '' : 'pointer-events-none'}`}
+            // Preload the next panorama without revealing it through countdown/result overlays.
+            className={`absolute left-0 top-[-75px] h-[calc(100%+75px)] w-full border-0 ${uiPhase === 'live_round' ? '' : 'invisible'} ${streetViewInteractive ? '' : 'pointer-events-none'}`}
             allowFullScreen
             loading="eager"
           />
@@ -446,12 +447,13 @@ export default function InGameScene({
                   </div>
                   <Button
                     variant="ghost"
+                    size="icon-md"
                     type="button"
                     onClick={() => {
                       setConfirmForfeit(false);
                       setForfeitRequested(false);
                     }}
-                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-surface-fill text-content-secondary transition hover:bg-surface-raised hover:text-content-primary"
+                    className="flex-shrink-0 bg-surface-fill text-content-secondary transition hover:bg-surface-raised hover:text-content-primary"
                     aria-label="Cancel forfeit"
                   >
                     <X size={16} strokeWidth={2.5} />
@@ -490,7 +492,7 @@ export default function InGameScene({
                     aria-label="Return to spawn location"
                     className="flex h-11 w-11 items-center justify-center rounded-full bg-hud-surface text-content-primary shadow-elev-2 backdrop-blur-hud transition hover:bg-surface-fill"
                   >
-                    <Flag size={16} strokeWidth={2.4} />
+                    <RotateCcw size={16} strokeWidth={2.4} />
                   </Button>
                 ) : null}
                 <Button

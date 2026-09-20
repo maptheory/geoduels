@@ -9,8 +9,6 @@ import { GameplaySocketClient } from '../lib/gameplay-socket-client';
 import { fetchMatchSession, startSingleplayerSession, streamQueue, type MatchConfig, type MatchReturnTarget, type QueueVariant } from '../lib/queue-client';
 
 type SendGameCommandOptions = {
-  errorMessage?: string;
-  forceReconnect?: boolean;
   silent?: boolean;
 };
 
@@ -52,19 +50,17 @@ export class MatchController extends ObservableStore<MatchState> {
   private readonly sessionController: SessionController;
   private readonly sfxController?: SfxController;
   private readonly socketClient: GameplaySocketClient;
-  private autoRecoverEnabled = true;
   private activeSession: AuthSessionSnapshot | null = null;
-  private recoverInFlight = false;
-  private recoverRequestId = 0;
   private recoverAbort: AbortController | null = null;
   private queueAbort: AbortController | null = null;
   private singleplayerStartInFlight = false;
-  private lastSocketOpenedAt = 0;
-  private lastServerSeenAt = 0;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private firstSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
-  private awaitingFirstSnapshotMatchId = '';
-  private firstSnapshotRecoverAttempts = 0;
+  private responseTimeout: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private awaitingSnapshot = false;
+  private connectionWanted = false;
+  private connectionGeneration = 0;
   private destroyed = false;
   private started = false;
 
@@ -75,41 +71,18 @@ export class MatchController extends ObservableStore<MatchState> {
     this.sfxController = params.sfxController;
     this.socketClient = new GameplaySocketClient(this.config, {
       onOpen: () => {
-        this.lastSocketOpenedAt = Date.now();
-        this.patchState({ connected: false, connectionIssue: '' });
-        this.dispatchMatchmaking({ type: 'game_connected' });
-        this.sendGameCommand('ping', {}, { forceReconnect: true, silent: true });
+        this.sendGameCommand('ping', { userId: this.activeSession?.userId || '' });
       },
-      onClose: ({ expected }) => {
-        this.patchState({ connected: false });
-        if (expected) {
-          return;
-        }
-        if (this.state.snapshot || this.state.activeMatchId) {
-          this.patchState({ connectionIssue: this.config.gameConnectionErrorMessage });
-          this.dispatchMatchmaking({ type: 'ws_closed' });
-          const currentSession = this.activeSession;
-          if (currentSession) {
-            void this.startRecover(currentSession);
-          }
-        }
-      },
-      onError: () => {
-        this.markConnectionUnhealthy(this.config.gameConnectionErrorMessage);
-      },
-      onActivity: () => {
-        this.noteServerActivity();
-      },
+      onClose: () => this.beginRecovery(),
+      onError: () => this.beginRecovery(),
+      onActivity: () => this.noteServerActivity(),
       onSnapshot: (snapshot) => {
         if (this.state.snapshot?.matchId === snapshot.matchId && snapshot.eventSequence < this.state.snapshot.eventSequence) {
           return;
         }
-        if (snapshot.matchId && snapshot.matchId === this.awaitingFirstSnapshotMatchId) {
-          this.clearFirstSnapshotTimeout();
-          this.awaitingFirstSnapshotMatchId = '';
-          this.firstSnapshotRecoverAttempts = 0;
-        }
-        this.noteServerActivity();
+        if (snapshot.matchId !== this.state.activeMatchId) return;
+        this.awaitingSnapshot = false;
+        this.reconnectAttempt = 0;
         if (snapshot.state === 'ended') {
           const selfUserId =
             this.activeSession?.userId ||
@@ -131,6 +104,8 @@ export class MatchController extends ObservableStore<MatchState> {
               ? snapshot.matchId
               : this.state.lastFinalizedMatchId,
         });
+        this.noteServerActivity();
+        this.dispatchMatchmaking({ type: 'game_connected' });
       },
       onTeamPing: (ping) => {
         if (!ping?.id || ping.roundId !== this.state.snapshot?.currentRound?.roundId) return;
@@ -143,7 +118,7 @@ export class MatchController extends ObservableStore<MatchState> {
         this.patchState({ queueError: message });
       },
       onProtocolError: () => {
-        this.markConnectionUnhealthy(this.config.gameConnectionErrorMessage, true);
+        this.beginRecovery();
       }
     });
   }
@@ -152,17 +127,18 @@ export class MatchController extends ObservableStore<MatchState> {
     if (this.started || typeof window === 'undefined') return;
     this.destroyed = false;
     this.started = true;
-    this.startHeartbeat();
+    this.heartbeatInterval = setInterval(() => this.probeConnection(), this.config.socketHeartbeatIntervalMs);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    window.addEventListener('online', this.handleOnline);
   }
 
   destroy() {
     this.destroyed = true;
     this.started = false;
-    this.recoverAbort?.abort();
-    this.clearRecoverTracking();
+    this.stopConnection();
     this.queueAbort?.abort();
-    this.clearFirstSnapshotTimeout();
-    this.socketClient.close();
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    window.removeEventListener('online', this.handleOnline);
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     this.heartbeatInterval = null;
   }
@@ -171,32 +147,8 @@ export class MatchController extends ObservableStore<MatchState> {
     return this.state;
   }
 
-  setAutoRecoverEnabled = (enabled: boolean) => {
-    this.autoRecoverEnabled = enabled;
-    if (!enabled) {
-      this.recoverAbort?.abort();
-      this.clearRecoverTracking();
-    }
-  };
-
   private patchState(patch: Partial<MatchState>) {
     this.state = { ...this.state, ...patch };
-    if (!this.destroyed) {
-      this.emit();
-    }
-  }
-
-  private clearRecoverTracking() {
-    this.recoverInFlight = false;
-    this.recoverAbort = null;
-    if (this.state.matchmaking.activeRecoverRequestID === null) return;
-    this.state = {
-      ...this.state,
-      matchmaking: {
-        ...this.state.matchmaking,
-        activeRecoverRequestID: null
-      }
-    };
     if (!this.destroyed) {
       this.emit();
     }
@@ -206,55 +158,100 @@ export class MatchController extends ObservableStore<MatchState> {
     this.patchState({ matchmaking: matchmakingReducer(this.state.matchmaking, action) });
   }
 
-  private startHeartbeat() {
-    this.heartbeatInterval = setInterval(() => {
-      if (!this.socketClient.isOpen()) return;
-      const now = Date.now();
-      const lastSeen = Math.max(this.lastSocketOpenedAt, this.lastServerSeenAt);
-      if (lastSeen > 0 && now - lastSeen > this.config.socketStaleAfterMs) {
-        this.markConnectionUnhealthy(this.config.connectionErrorMessage, true);
-        return;
-      }
-      this.sendGameCommand('ping', { userId: this.activeSession?.userId || '' }, { forceReconnect: true, silent: true });
-    }, this.config.socketHeartbeatIntervalMs);
+  private clearResponseTimeout() {
+    if (this.responseTimeout) clearTimeout(this.responseTimeout);
+    this.responseTimeout = null;
+  }
+
+  private armResponseTimeout(delay: number) {
+    this.clearResponseTimeout();
+    if (document.hidden) return;
+    this.responseTimeout = setTimeout(() => {
+      this.responseTimeout = null;
+      if (!document.hidden) this.beginRecovery();
+    }, delay);
+  }
+
+  private handleVisibilityChange = () => {
+    this.clearResponseTimeout();
+    if (!document.hidden) this.handleOnline();
+  };
+
+  private handleOnline = () => {
+    if (!this.connectionWanted || this.destroyed) return;
+    if (this.socketClient.isOpen()) {
+      this.clearResponseTimeout();
+      this.probeConnection(10_000);
+    } else if (this.socketClient.isConnecting()) {
+      this.armResponseTimeout(10_000);
+    } else {
+      this.beginRecovery(true);
+    }
+  };
+
+  private probeConnection(timeout = this.config.socketStaleAfterMs) {
+    if (!this.connectionWanted || document.hidden || this.responseTimeout || !this.socketClient.isOpen()) return;
+    // Arm before sending: any server activity proves liveness, but only a new
+    // snapshot makes a replacement socket ready for gameplay.
+    this.armResponseTimeout(timeout);
+    this.sendGameCommand('ping', { userId: this.activeSession?.userId || '' });
   }
 
   private noteServerActivity() {
-    this.lastServerSeenAt = Date.now();
-    const nextQueueError = this.state.queueError === this.config.connectionErrorMessage ? '' : this.state.queueError;
-    if (this.state.connected && !this.state.connectionIssue && this.state.queueError === nextQueueError) {
-      return;
-    }
+    if (this.awaitingSnapshot) return;
+    this.clearResponseTimeout();
+    if (this.state.connected && !this.state.connectionIssue) return;
     this.patchState({
       connected: true,
       connectionIssue: '',
-      queueError: nextQueueError
+      queueError: this.state.queueError === this.config.connectionErrorMessage ? '' : this.state.queueError
     });
   }
 
-  private markConnectionUnhealthy(message = this.config.connectionErrorMessage, forceReconnect = false) {
-    const next: Partial<MatchState> = {
-      connected: false,
-      connectionIssue: message
-    };
-    if (this.state.matchmaking.status === 'queueing') {
-      next.queueError = message;
-    }
-    this.patchState(next);
-    if (!forceReconnect) return;
-    if (!this.socketClient.isOpenOrConnecting()) return;
+  private stopConnection() {
+    this.connectionGeneration += 1;
+    this.connectionWanted = false;
+    this.recoverAbort?.abort();
+    this.recoverAbort = null;
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = null;
+    this.clearResponseTimeout();
     this.socketClient.close();
+    this.awaitingSnapshot = false;
+    this.reconnectAttempt = 0;
+    this.patchState({ connected: false });
+  }
+
+  private beginRecovery(immediate = false) {
+    if (!this.connectionWanted || this.destroyed) return;
+    this.clearResponseTimeout();
+    this.socketClient.close();
+    this.awaitingSnapshot = true;
+    this.patchState({ connected: false, connectionIssue: this.config.gameConnectionErrorMessage });
+    this.dispatchMatchmaking({ type: 'ws_closed' });
+    if (this.recoverAbort) return;
+    if (this.reconnectTimeout) {
+      if (!immediate) return;
+      clearTimeout(this.reconnectTimeout);
+    }
+    const delay = immediate ? 0 : Math.min(1000 * 2 ** Math.min(this.reconnectAttempt, 4), 15000) * (0.8 + Math.random() * 0.2);
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null;
+      this.reconnectAttempt += 1;
+      void this.startRecover();
+    }, delay);
+  }
+
+  private markUnavailable(message: string) {
+    this.stopConnection();
+    this.patchState({ connected: false, connectionIssue: message });
+    this.dispatchMatchmaking({ type: 'set_status', status: 'abandoned' });
   }
 
   resetConnectionState = () => {
-    this.recoverAbort?.abort();
-    this.clearRecoverTracking();
+    this.stopConnection();
     this.queueAbort?.abort();
-    this.clearFirstSnapshotTimeout();
-    this.socketClient.close();
     this.activeSession = null;
-    this.lastSocketOpenedAt = 0;
-    this.lastServerSeenAt = 0;
     this.patchState({
       ...this.state,
       connected: false,
@@ -270,49 +267,34 @@ export class MatchController extends ObservableStore<MatchState> {
     });
   };
 
-  setConnectionIssue = (value: string) => {
-    this.patchState({ connectionIssue: value });
-  };
-
-  private async startRecover(session: AuthSessionSnapshot) {
-    if (!session.userId || !session.accessToken || session.nicknameRequired) return;
-    if (this.recoverInFlight || this.state.matchmaking.activeRecoverRequestID !== null) return;
-
-    const requestID = ++this.recoverRequestId;
-    const intentVersionAtStart = this.state.matchmaking.intentVersion;
+  private async startRecover() {
+    if (!this.connectionWanted || this.destroyed || this.recoverAbort) return;
+    const targetMatchID = this.state.activeMatchId;
+    if (!targetMatchID) return;
     const controller = new AbortController();
-
-    this.recoverInFlight = true;
     this.recoverAbort = controller;
-    this.dispatchMatchmaking({ type: 'recover_started', requestID });
-
+    // Bound the whole attempt, including session refresh. Late results are
+    // ignored after cancellation, leaving a match, or starting another attempt.
+    const timeout = setTimeout(() => {
+      if (this.recoverAbort !== controller) return;
+      controller.abort();
+      this.recoverAbort = null;
+      this.beginRecovery();
+    }, 15_000);
+    const isCurrent = () => !controller.signal.aborted && this.recoverAbort === controller && this.connectionWanted && !this.destroyed;
     try {
-      const ensuredSession = await this.sessionController.ensureFreshSession();
-      if (!ensuredSession) {
-        this.dispatchMatchmaking({ type: 'recover_failed', requestID });
-        this.sessionController.clearAuthSession('Session expired. Please sign in again.');
+      const session = await this.sessionController.ensureFreshSession();
+      if (!isCurrent()) return;
+      if (!session) {
+        this.markUnavailable('Session expired. Please sign in again.');
         return;
       }
-      const targetMatchID = this.state.activeMatchId || this.state.snapshot?.matchId || '';
-      if (!targetMatchID) {
-        this.dispatchMatchmaking({ type: 'recover_failed', requestID });
-        return;
-      }
-      const resolved = await fetchMatchSession(this.config, ensuredSession.accessToken, targetMatchID, controller.signal);
+      const resolved = await fetchMatchSession(this.config, session.accessToken, targetMatchID, controller.signal);
+      if (!isCurrent()) return;
       if (resolved.status === 'live_connectable') {
-        const recoveredSession = this.sessionController.getSessionSnapshot();
-        if (!recoveredSession) {
-          this.dispatchMatchmaking({ type: 'recover_failed', requestID });
-          return;
-        }
-        this.dispatchMatchmaking({
-          type: 'recover_resolved',
-          requestID,
-          intentVersionAtStart,
-          outcome: 'matched',
-          hasSnapshot: !!this.state.snapshot
-        });
-        this.connectToAssignedGame(recoveredSession, resolved.node, resolved.wsPath, resolved.ticket, resolved.matchId, {
+        this.recoverAbort = null;
+        this.dispatchMatchmaking({ type: 'set_status', status: 'matched_connecting' });
+        this.connectToAssignedGame(session, resolved.node, resolved.wsPath, resolved.ticket, resolved.matchId, {
           sourcePartyId: resolved.sourcePartyId,
           sourcePartyInviteCode: resolved.sourcePartyInviteCode,
           returnTarget: resolved.returnTarget
@@ -320,46 +302,31 @@ export class MatchController extends ObservableStore<MatchState> {
         return;
       }
       if (resolved.status === 'history') {
+        this.stopConnection();
         this.patchState({
+          connected: false,
           snapshot: resolved.snapshot,
+          lastFinalizedMatchId: resolved.matchId,
           activeMatchId: resolved.matchId,
           connectionIssue: '',
           returnTarget: resolved.returnTarget || { kind: 'home' }
         });
-        this.dispatchMatchmaking({
-          type: 'recover_resolved',
-          requestID,
-          intentVersionAtStart,
-          outcome: 'ready',
-          hasSnapshot: true
-        });
+        this.dispatchMatchmaking({ type: 'set_status', status: 'ready' });
         return;
       }
-      if (resolved.status === 'replaced') {
-        this.patchState({
-          snapshot: null,
-          connectionIssue: 'This match was replaced by another session.'
-        });
-      } else {
-        this.patchState({
-          snapshot: null,
-          connectionIssue: 'Match unavailable.'
-        });
-      }
-      this.dispatchMatchmaking({
-        type: 'recover_resolved',
-        requestID,
-        intentVersionAtStart,
-        outcome: 'abandoned',
-        hasSnapshot: false
-      });
-      return;
-    } catch (error: any) {
-      this.dispatchMatchmaking({ type: 'recover_failed', requestID });
+      const message = resolved.status === 'live_auth_required'
+        ? 'Session expired. Please sign in again.'
+        : resolved.status === 'replaced'
+          ? 'This match was replaced by another session.'
+          : 'Match unavailable.';
+      this.markUnavailable(message);
+    } catch {
+      // Network failures and server errors retry through the same recovery loop.
     } finally {
+      clearTimeout(timeout);
       if (this.recoverAbort === controller) {
-        this.recoverInFlight = false;
         this.recoverAbort = null;
+        this.beginRecovery();
       }
     }
   }
@@ -374,52 +341,33 @@ export class MatchController extends ObservableStore<MatchState> {
   ) {
     if (!session.userId || !session.accessToken) return;
     this.activeSession = session;
+    this.connectionWanted = true;
+    this.awaitingSnapshot = true;
     this.patchState({
+      connected: false,
       activeMatchId: matchId || this.state.activeMatchId,
       lastFinalizedMatchId: '',
       sourcePartyId: source?.sourcePartyId || '',
       sourcePartyInviteCode: source?.sourcePartyInviteCode || '',
       returnTarget: source?.returnTarget || this.state.returnTarget || { kind: 'home' }
     });
-    this.socketClient.connect(session, node, wsPath, ticket);
-    this.startFirstSnapshotTimeout(matchId || this.state.activeMatchId);
-  }
-
-  private clearFirstSnapshotTimeout() {
-    if (this.firstSnapshotTimeout) clearTimeout(this.firstSnapshotTimeout);
-    this.firstSnapshotTimeout = null;
-  }
-
-  private startFirstSnapshotTimeout(matchId?: string) {
-    const targetMatchId = matchId || '';
-    if (!targetMatchId) return;
-    this.clearFirstSnapshotTimeout();
-    this.awaitingFirstSnapshotMatchId = targetMatchId;
-    this.firstSnapshotTimeout = setTimeout(() => {
-      if (this.destroyed || this.state.snapshot?.matchId === targetMatchId) return;
-      const session = this.activeSession || this.sessionController.getSessionSnapshot();
-      this.socketClient.close();
-      this.patchState({
-        connected: false,
-        connectionIssue: 'Still trying to join the live match...'
-      });
-      if (!session || this.firstSnapshotRecoverAttempts >= 3) {
-        this.dispatchMatchmaking({ type: 'set_status', status: 'abandoned', bumpIntent: false });
-        this.patchState({ connectionIssue: 'Could not join the live match. Please retry.' });
-        return;
-      }
-      this.firstSnapshotRecoverAttempts += 1;
-      this.dispatchMatchmaking({ type: 'ws_closed' });
-      void this.startRecover(session);
-    }, 10000);
+    try {
+      this.socketClient.connect(node, wsPath, ticket);
+      this.armResponseTimeout(10_000);
+    } catch {
+      this.beginRecovery();
+    }
   }
 
   resumeResolvedMatch = async (
     assignment: { matchId: string; node: string; wsPath: string; ticket: string; sourcePartyId?: string; sourcePartyInviteCode?: string; returnTarget?: MatchReturnTarget },
     options?: { playMatchFoundSfx?: boolean }
   ) => {
+    this.stopConnection();
+    this.queueAbort?.abort();
+    const generation = this.connectionGeneration;
     const session = this.sessionController.getSessionSnapshot() || (await this.sessionController.ensureFreshSession());
-    if (!session || !assignment.node || !assignment.ticket) {
+    if (this.destroyed || generation !== this.connectionGeneration || !session || !assignment.node || !assignment.ticket) {
       return false;
     }
     this.patchState({ queueError: '', connectionIssue: '' });
@@ -436,7 +384,7 @@ export class MatchController extends ObservableStore<MatchState> {
   };
 
   joinQueue = (queues: QueueVariant[] = ['moving']) => {
-    this.recoverAbort?.abort();
+    this.stopConnection();
     this.queueAbort?.abort();
     this.patchState({ queueError: '' });
     const controller = new AbortController();
@@ -445,6 +393,7 @@ export class MatchController extends ObservableStore<MatchState> {
     void (async () => {
       try {
         const session = await this.sessionController.getPlayableSession();
+        if (controller.signal.aborted || this.destroyed) return;
         if (!session) {
           this.patchState({ queueError: 'Unable to create session' });
           this.dispatchMatchmaking({ type: 'queue_error' });
@@ -452,6 +401,7 @@ export class MatchController extends ObservableStore<MatchState> {
         }
         this.dispatchMatchmaking({ type: 'join_requested', startedAt: Date.now() });
         await streamQueue(this.config, session, controller.signal, queues, (event) => {
+          if (controller.signal.aborted || this.destroyed) return;
           if (event.type === 'queue_status') {
             this.dispatchMatchmaking({ type: 'queue_status', status: event.status, queuedAt: event.queuedAt });
             return;
@@ -491,7 +441,7 @@ export class MatchController extends ObservableStore<MatchState> {
       return '';
     }
     this.singleplayerStartInFlight = true;
-    this.recoverAbort?.abort();
+    this.stopConnection();
     this.queueAbort?.abort();
     this.patchState({ singleplayerError: '', connectionIssue: '' });
     this.dispatchMatchmaking({ type: 'set_status', status: 'matched_connecting' });
@@ -500,6 +450,7 @@ export class MatchController extends ObservableStore<MatchState> {
 
     try {
       const session = await this.sessionController.getPlayableSession();
+      if (controller.signal.aborted || this.destroyed) return '';
       if (!session) {
         this.patchState({ singleplayerError: 'Unable to create session' });
         this.dispatchMatchmaking({ type: 'set_status', status: 'ready' });
@@ -515,7 +466,7 @@ export class MatchController extends ObservableStore<MatchState> {
       if (!assignment.node || !assignment.ticket) {
         throw new Error('Singleplayer unavailable');
       }
-      if (this.queueAbort !== controller) {
+      if (controller.signal.aborted || this.destroyed || this.queueAbort !== controller) {
         return '';
       }
       this.connectToAssignedGame(session, assignment.node, assignment.wsPath, assignment.ticket, assignment.matchId, { returnTarget: assignment.returnTarget });
@@ -542,7 +493,7 @@ export class MatchController extends ObservableStore<MatchState> {
 
   cancelQueue = () => {
     if (!this.sessionController.getSessionSnapshot()) return;
-    this.recoverAbort?.abort();
+    this.stopConnection();
     this.queueAbort?.abort();
     this.dispatchMatchmaking({ type: 'leave_requested' });
     this.patchState({ queueError: '' });
@@ -558,11 +509,10 @@ export class MatchController extends ObservableStore<MatchState> {
 
   sendGameCommand = (type: string, payload: Record<string, unknown>, options?: SendGameCommandOptions) => {
     if (!this.socketClient.isOpen()) {
-      if (!options?.silent) {
-        this.markConnectionUnhealthy(options?.errorMessage ?? this.config.connectionErrorMessage, !!options?.forceReconnect);
-      }
+      if (!options?.silent) this.beginRecovery();
       return false;
     }
+    if (type !== 'ping' && !this.state.connected && !options?.silent) return false;
     const cmd = {
       commandId: `${this.activeSession?.userId || this.sessionController.getSessionSnapshot()?.userId || 'anon'}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       type,
@@ -573,7 +523,7 @@ export class MatchController extends ObservableStore<MatchState> {
       return this.socketClient.send(cmd);
     } catch {
       if (!options?.silent) {
-        this.markConnectionUnhealthy(options?.errorMessage ?? this.config.connectionErrorMessage, !!options?.forceReconnect);
+        this.beginRecovery();
       }
       return false;
     }

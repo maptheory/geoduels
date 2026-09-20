@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/router";
 import { useRuntimeConfig } from "../../../lib/runtime-config-context";
 import { formatQueueElapsed } from "../../lobby/lib/lobby-ui";
@@ -6,6 +6,8 @@ import { getHomeRuntime, startHomeRuntime } from "../../home/state/home-runtime"
 import type { AppNavTask } from "./AppNavTasks";
 import type { MatchState } from "../../matchmaking/controllers/match-controller";
 import type { PartyRuntimeState } from "../../lobby/controllers/party-controller";
+import { useAuthState } from "../../auth/components/AuthProvider";
+import { normalizeEntityRouteId, toPublicEntityId } from "../../../lib/entity-id";
 
 const AppActivityContext = createContext<AppNavTask[]>([]);
 
@@ -31,7 +33,7 @@ export function deriveAppActivities({
     );
     tasks.push({
       kind: "queue",
-      label: elapsed ? `Finding a duel · ${elapsed}` : "Finding a duel…",
+      label: elapsed ? `${elapsed}` : "0:00",
       onCancel: cancelQueue,
     });
   }
@@ -53,6 +55,7 @@ export function deriveAppActivities({
 export function AppActivityProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const config = useRuntimeConfig();
+  const auth = useAuthState();
   const runtime = useMemo(() => getHomeRuntime(config), [config]);
   const party = useSyncExternalStore(
     runtime.partyController.subscribe,
@@ -64,12 +67,45 @@ export function AppActivityProvider({ children }: { children: ReactNode }) {
     runtime.matchController.getState.bind(runtime.matchController),
     runtime.matchController.getState.bind(runtime.matchController),
   );
+  const restoredParty = useRef("");
+  const previousUserId = useRef(auth.userId);
+  const navigatedMatch = useRef("");
   const [nowMs, setNowMs] = useState(0);
   const isQueueing = match.matchmaking.status === "queueing";
 
   useEffect(() => {
     startHomeRuntime(runtime);
   }, [runtime]);
+
+  useEffect(() => {
+    if (previousUserId.current !== auth.userId) {
+      if (previousUserId.current) runtime.partyController.reset();
+      previousUserId.current = auth.userId;
+      restoredParty.current = "";
+      navigatedMatch.current = "";
+    }
+    const currentParty = auth.bootstrap?.activity.currentParty;
+    if (!auth.userId || auth.bootstrap?.auth?.user?.id !== auth.userId || !currentParty) return;
+    const key = `${auth.userId}:${currentParty.id}`;
+    if (restoredParty.current === key) return;
+    restoredParty.current = key;
+    void runtime.partyController.restoreParty(currentParty);
+  }, [auth.userId, auth.bootstrap, runtime]);
+
+  useEffect(() => {
+    const matchId = party.launchMatchId;
+    if (!matchId) {
+      navigatedMatch.current = "";
+      return;
+    }
+    if (!router.isReady || navigatedMatch.current === matchId) return;
+    navigatedMatch.current = matchId;
+    const routedId = typeof router.query.id === "string" ? normalizeEntityRouteId(router.query.id) : "";
+    if (router.pathname === "/match/[id]" && routedId === matchId) return;
+    void router.replace(`/match/${encodeURIComponent(toPublicEntityId(matchId))}`).catch(() => {
+      navigatedMatch.current = "";
+    });
+  }, [party.launchMatchId, router]);
 
   useEffect(() => {
     if (!isQueueing) return;

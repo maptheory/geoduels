@@ -27,6 +27,7 @@ type HomePageLobbyProps = {
     | "startParty"
     | "updatePartySettings"
     | "switchPartyTeam"
+    | "shufflePartyTeams"
     | "loadLeaderboard"
     | "startSupportDonation"
   >;
@@ -77,6 +78,7 @@ export default function HomePageLobby({
       startParty={actions.startParty}
       updatePartySettings={actions.updatePartySettings}
       switchPartyTeam={actions.switchPartyTeam}
+      shufflePartyTeams={actions.shufflePartyTeams}
       queueError={lobby.queueError}
       singleplayerError={lobby.singleplayerError}
       onlinePlayers={lobby.onlinePlayers}

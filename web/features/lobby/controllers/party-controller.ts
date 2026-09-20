@@ -2,12 +2,12 @@ import { ObservableStore } from "../../../lib/observable-store";
 import type { RuntimeConfig } from "../../../lib/runtime-config";
 import type { SessionController } from "../../auth/controllers/session-controller";
 import type { AuthSessionSnapshot } from "../../auth/session";
-import type { MatchController } from "../../matchmaking/controllers/match-controller";
 import type { MatchConfig } from "../../matchmaking/lib/queue-client";
 import {
   applyPartyPatch,
   createParty,
   joinParty,
+  type PartyAssignment,
   type PartySnapshot,
   type PartyMember,
   type PartyTeamId,
@@ -30,6 +30,7 @@ export type PartyRuntimeState = {
   snapshot: PartySnapshot | null;
   self: PartyMember | null;
   error: string;
+  launchMatchId?: string;
 };
 
 const initialState: PartyRuntimeState = {
@@ -39,6 +40,7 @@ const initialState: PartyRuntimeState = {
   snapshot: null,
   self: null,
   error: "",
+  launchMatchId: "",
 };
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -49,7 +51,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 export class PartyController extends ObservableStore<PartyRuntimeState> {
   private readonly config: RuntimeConfig;
   private readonly sessionController: SessionController;
-  private readonly matchController: MatchController;
+  private readonly onMatchAssigned: (assignment: PartyAssignment) => Promise<boolean>;
   private state: PartyRuntimeState = initialState;
   private streamAbort: AbortController | null = null;
   private socket: PartySocket | null = null;
@@ -62,12 +64,12 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
   constructor(params: {
     config: RuntimeConfig;
     sessionController: SessionController;
-    matchController: MatchController;
+    onMatchAssigned: (assignment: PartyAssignment) => Promise<boolean>;
   }) {
     super();
     this.config = params.config;
     this.sessionController = params.sessionController;
-    this.matchController = params.matchController;
+    this.onMatchAssigned = params.onMatchAssigned;
   }
 
   getState() {
@@ -87,6 +89,17 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
     this.patchState(initialState);
   };
 
+  // Restoration only subscribes to server-validated membership; it never joins.
+  restoreParty = async (party: { id: string; inviteCode: string }) => {
+    if (this.state.status !== "idle" || this.destroyed) return;
+    this.patchState({ partyId: party.id, inviteCode: party.inviteCode, status: "reconnecting" });
+    try {
+      await this.ensureStream();
+    } catch {
+      this.scheduleReconnect();
+    }
+  };
+
   admitParty = async (inviteCode: string) => {
     const code = inviteCode.trim().toUpperCase();
     if (!code) return;
@@ -94,7 +107,7 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
       this.state.inviteCode === code &&
       this.isCurrentUserMember(this.state.snapshot)
     ) {
-      await this.ensureStream();
+      if (!this.socket || this.state.status !== "ready") await this.ensureStream();
       return;
     }
     if (
@@ -276,6 +289,19 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
     }
   };
 
+  shuffleTeams = async () => {
+    const session = this.sessionController.getSessionSnapshot();
+    if (!this.state.partyId || !session) return;
+    this.patchState({ error: "" });
+    try {
+      await this.requireSocket().command("shuffle_teams", {});
+    } catch (error) {
+      this.patchState({
+        error: getErrorMessage(error, "Could not shuffle teams"),
+      });
+    }
+  };
+
   private async playableSession() {
     const session = await this.sessionController.getPlayableSession();
     if (!session) {
@@ -289,12 +315,14 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
   }
 
   private async ensureStream() {
-    if (!this.state.partyId || !this.isCurrentUserMember(this.state.snapshot)) {
-      return;
-    }
+    const partyId = this.state.partyId;
+    const requestId = this.connectRequestId;
+    const userId = this.sessionController.getSessionSnapshot()?.userId;
+    if (!partyId || !userId || this.destroyed) return;
     const session = await this.sessionController.ensureFreshSession();
-    if (!session) throw new Error("Session unavailable");
-    await this.connectToParty(session, this.state.partyId);
+    if (requestId !== this.connectRequestId || partyId !== this.state.partyId || this.destroyed) return;
+    if (!session || session.userId !== userId) throw new Error("Session unavailable");
+    await this.connectToParty(session, partyId);
   }
 
   private async connectToParty(
@@ -343,7 +371,6 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
             return;
           }
           this.reconnectAttempt = 0;
-          if (options?.waitForSnapshot) this.markExistingMatchHandled(event.party);
           this.patchSnapshot(event.party, "ready");
           readyResolve?.();
           readyResolve = null;
@@ -361,15 +388,22 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
         if (event.type === "match_assigned") {
           if (this.handledMatchId === event.assignment.matchId) return;
           this.handledMatchId = event.assignment.matchId;
-          void this.matchController.resumeResolvedMatch(event.assignment, {
-            playMatchFoundSfx: true,
+          // Publish the navigation target immediately and cancel stale route work
+          // through the shared route controller before connecting to this match.
+          void this.onMatchAssigned(event.assignment).then((ok) => {
+            if (!ok && requestId === this.connectRequestId) this.handledMatchId = "";
+          }).catch((error) => {
+            if (requestId !== this.connectRequestId) return;
+            this.handledMatchId = "";
+            this.patchState({ error: getErrorMessage(error, "Could not join assigned match") });
           });
+          this.patchState({ launchMatchId: event.assignment.matchId });
           return;
         }
         if (event.type === "party_error") {
           if (readyTimeout) window.clearTimeout(readyTimeout);
           this.patchState({ status: "error", error: event.message });
-          if (event.message.toLowerCase().includes("left this party")) {
+          if (event.message.toLowerCase().includes("left this party") || event.message === "Party unavailable") {
             this.reset();
           }
           readyReject?.(new Error(event.message));
@@ -385,7 +419,7 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
           readyReject(new Error("Party connection closed"));
           return;
         }
-        if (this.state.snapshot && this.state.partyId) {
+        if (this.state.partyId) {
           this.patchState({ status: "reconnecting" });
           this.scheduleReconnect();
         }
@@ -395,7 +429,7 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
         if (error?.name === "AbortError") return;
         if (readyTimeout) window.clearTimeout(readyTimeout);
         this.patchState({
-          status: this.state.snapshot ? "reconnecting" : "error",
+          status: this.state.partyId ? "reconnecting" : "error",
           error: getErrorMessage(error, "Party connection failed"),
         });
         readyReject?.(
@@ -403,7 +437,7 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
             ? error
             : new Error("Party connection failed"),
         );
-        if (!readyReject && this.state.snapshot && this.state.partyId) {
+        if (!readyReject && this.state.partyId) {
           this.scheduleReconnect();
         }
       });
@@ -465,11 +499,6 @@ export class PartyController extends ObservableStore<PartyRuntimeState> {
     const session = this.sessionController.getSessionSnapshot();
     if (!snapshot || !session?.userId) return null;
     return snapshot.members.find((member) => member.userId === session.userId) || null;
-  }
-
-  private markExistingMatchHandled(snapshot: PartySnapshot) {
-    if (snapshot.state !== "in_match" && snapshot.state !== "started") return;
-    this.handledMatchId = snapshot.activeMatchId || snapshot.startedMatchId || "";
   }
 
   private patchState(patch: Partial<PartyRuntimeState>) {

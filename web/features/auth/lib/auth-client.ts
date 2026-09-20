@@ -44,11 +44,12 @@ export type BootstrapViewer = {
 };
 
 export type AppBootstrapPayload = {
-  version: 1;
+  version: 1 | 2;
   auth: AuthSessionPayload | null;
   viewer: BootstrapViewer | null;
   preferences: { revision: number; value: unknown } | null;
   activity: {
+    currentParty?: { id: string; inviteCode: string } | null;
     activeMatch: { status: "match"; matchId: string; mode?: string } | null;
     notifications: UserNotification[];
   };
@@ -70,9 +71,8 @@ export class AuthSessionError extends Error {
 }
 
 export async function requestBootstrap(config: RuntimeConfig): Promise<AppBootstrapPayload> {
-  const resp = await apiFetch(config, "/v1/bootstrap", {
-    credentials: "include",
-  });
+  // Older API deployments ignore the version parameter and return compatible v1 data.
+  const resp = await apiFetch(config, "/v1/bootstrap?version=2", { credentials: "include" });
   if (!resp.ok) {
     throw new AuthSessionError(resp.status, await readError(resp, "Application bootstrap failed"));
   }

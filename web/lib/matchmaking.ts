@@ -1,37 +1,22 @@
 export type MatchmakingStatus = 'idle' | 'ready' | 'queueing' | 'matched_connecting' | 'in_match' | 'recovering' | 'abandoned';
 
-export type RecoverOutcome = 'ready' | 'queueing' | 'matched' | 'abandoned';
-
 export type MatchmakingState = {
   status: MatchmakingStatus;
-  intentVersion: number;
-  activeRecoverRequestID: number | null;
   queueStartedAt: number | null;
 };
 
 export type MatchmakingAction =
-  | { type: 'set_status'; status: MatchmakingStatus; bumpIntent?: boolean }
+  | { type: 'set_status'; status: MatchmakingStatus }
   | { type: 'join_requested'; startedAt?: number }
   | { type: 'leave_requested' }
   | { type: 'queue_status'; status: string; queuedAt?: number }
   | { type: 'match_found' }
   | { type: 'game_connected' }
   | { type: 'queue_error' }
-  | { type: 'ws_closed' }
-  | { type: 'recover_started'; requestID: number }
-  | {
-      type: 'recover_resolved';
-      requestID: number;
-      intentVersionAtStart: number;
-      outcome: RecoverOutcome;
-      hasSnapshot: boolean;
-    }
-  | { type: 'recover_failed'; requestID: number };
+  | { type: 'ws_closed' };
 
 export const initialMatchmakingState: MatchmakingState = {
   status: 'idle',
-  intentVersion: 0,
-  activeRecoverRequestID: null,
   queueStartedAt: null
 };
 
@@ -41,13 +26,12 @@ export function matchmakingReducer(state: MatchmakingState, action: MatchmakingA
       return {
         ...state,
         status: action.status,
-        queueStartedAt: action.status === 'queueing' ? (state.queueStartedAt ?? null) : null,
-        intentVersion: action.bumpIntent === false ? state.intentVersion : state.intentVersion + 1
+        queueStartedAt: action.status === 'queueing' ? (state.queueStartedAt ?? null) : null
       };
     case 'join_requested':
-      return { ...state, status: 'queueing', queueStartedAt: action.startedAt ?? null, intentVersion: state.intentVersion + 1 };
+      return { ...state, status: 'queueing', queueStartedAt: action.startedAt ?? null };
     case 'leave_requested':
-      return { ...state, status: 'ready', queueStartedAt: null, intentVersion: state.intentVersion + 1 };
+      return { ...state, status: 'ready', queueStartedAt: null };
     case 'queue_status': {
       const normalized = action.status === 'queued' ? 'queueing' : action.status;
       if (normalized === 'left') {
@@ -78,35 +62,6 @@ export function matchmakingReducer(state: MatchmakingState, action: MatchmakingA
         return { ...state, status: 'recovering' };
       }
       return state;
-    case 'recover_started':
-      return { ...state, activeRecoverRequestID: action.requestID };
-    case 'recover_resolved': {
-      if (state.activeRecoverRequestID !== action.requestID) {
-        return state;
-      }
-      const next = { ...state, activeRecoverRequestID: null };
-      if (action.outcome === 'matched') {
-        return { ...next, status: 'matched_connecting' };
-      }
-      if (action.outcome === 'abandoned') {
-        return { ...next, status: 'abandoned' };
-      }
-      if (action.intentVersionAtStart != state.intentVersion) {
-        return next;
-      }
-      if (action.outcome === 'queueing') {
-        return { ...next, status: 'queueing', queueStartedAt: state.queueStartedAt };
-      }
-      if (!action.hasSnapshot) {
-        return { ...next, status: 'ready' };
-      }
-      return next;
-    }
-    case 'recover_failed':
-      if (state.activeRecoverRequestID !== action.requestID) {
-        return state;
-      }
-      return { ...state, activeRecoverRequestID: null };
     default:
       return state;
   }
