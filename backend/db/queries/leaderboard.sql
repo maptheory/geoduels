@@ -6,6 +6,9 @@ ON CONFLICT (key) DO NOTHING;
 -- name: GetActiveSeasonID :one
 SELECT (value_json->>'activeSeasonId')::text FROM site_settings WHERE key = 'ranked_season';
 
+-- Ranked standings: non-guest, not currently banned, order mmr DESC, updated_at ASC, user_id ASC.
+-- ListLeaderboard, GetLeaderboardTotals, and ListRankedSeasonFinishers must keep that set and order.
+
 -- name: GetLeaderboardTotals :one
 WITH ranked AS (
  SELECT r.user_id, row_number() OVER (ORDER BY r.mmr DESC, r.updated_at ASC, r.user_id ASC) AS rank,

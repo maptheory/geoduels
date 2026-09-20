@@ -24,12 +24,6 @@ select coalesce(max(streak),0)::int from winning_streaks;
 -- name: GetFlawlessWins :one
 select count(*)::int from match_players mp join match_history h on h.match_id=mp.match_id where mp.user_id=$1 and h.mode='duel' and h.winner_user_id=$1 and mp.hp>=6000;
 
--- name: GetLeaderboardPosition :one
-select coalesce((select row_number() over(order by r.mmr desc,r.updated_at asc,r.user_id asc) from ranks r left join users u on u.id=r.user_id where r.user_id=$1 and r.mode=$2 and r.season_id=$3 and coalesce(u.account_type,'registered') <> 'guest'),0)::int;
-
--- name: GetLeaderboardTotal :one
-select count(*)::int from ranks r left join users u on u.id=r.user_id where r.mode=$1 and r.season_id=$2 and coalesce(u.account_type,'registered') <> 'guest';
-
 -- name: GetPerfectGuesses :one
 select count(*)::int from ranked_guess_events where user_id=$1 and score=5000;
 

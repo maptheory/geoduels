@@ -136,11 +136,11 @@ func (s *PGStore) GetPublicPlayerProfileByNickname(nickname string) (PublicPlaye
 	if e != nil {
 		return p, e
 	}
-	pos, e := s.db.GetLeaderboardPosition(ctx, db.GetLeaderboardPositionParams{UserID: id, Mode: modeDuel, SeasonID: seasonID})
-	if e != nil {
-		return p, e
-	}
-	total, e := s.db.GetLeaderboardTotal(ctx, db.GetLeaderboardTotalParams{Mode: modeDuel, SeasonID: seasonID})
+	standings, e := s.db.GetLeaderboardTotals(ctx, db.GetLeaderboardTotalsParams{
+		SelfUserID: p.UserID,
+		Mode:       modeDuel,
+		SeasonID:   seasonID,
+	})
 	if e != nil {
 		return p, e
 	}
@@ -156,7 +156,7 @@ func (s *PGStore) GetPublicPlayerProfileByNickname(nickname string) (PublicPlaye
 	if e != nil {
 		return p, e
 	}
-	p.LeaderboardRank, p.LeaderboardTotal, p.BestWinStreak, p.PerfectGuesses, p.FlawlessWins = int(pos), int(total), int(streak), int(perfect), int(flawless)
+	p.LeaderboardRank, p.LeaderboardTotal, p.BestWinStreak, p.PerfectGuesses, p.FlawlessWins = int(standings.SelfRank), int(standings.TotalPlayers), int(streak), int(perfect), int(flawless)
 	badges, selected, err := s.profileBadges(ctx, p.UserID, badgekit.IDFromCode(selectedBadgeCode))
 	if err != nil {
 		return p, err
